@@ -1,0 +1,6 @@
+build/
+*.o
+deploy-cli
+src/test_main
+.DS_Store
+*.log
