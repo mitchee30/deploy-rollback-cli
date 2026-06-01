@@ -29,6 +29,12 @@ namespace DeployGuard {
         SUCCESS
     };
 
+    enum class DeploymentState {
+        STABLE,
+        INSTALLING,
+        ROLLING_BACK
+    };
+
     // ------------------------------------------------------------------------
     // Logger Class
     // Handles persistent logging to a file and colored console output.
@@ -74,6 +80,7 @@ namespace DeployGuard {
     public:
         DeployController(std::shared_ptr<Logger> logger, std::shared_ptr<ProcessManager> proc_mgr, Config config);
 
+        void checkAndRecoverState();
         bool runDeployment();
 
     private:
@@ -82,6 +89,10 @@ namespace DeployGuard {
         Config config_;
 
         bool initiateRollback();
+        void writeState(DeploymentState state);
+        DeploymentState readState();
+        void clearState();
+        std::string getStateFilePath() const;
     };
 
     // ------------------------------------------------------------------------

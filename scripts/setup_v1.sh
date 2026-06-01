@@ -16,12 +16,17 @@ mkdir -p "$TARGET_DIR"
 # Create v1.0 file (Stable Version)
 cat << 'EOF' > "$RELEASE_v1/app.sh"
 #!/bin/bash
-echo "====================================="
-echo "   🟢 MyWebservice App - Version 1.0"
-echo "   Status: Running stable"
-echo "   Port: 8080"
-echo "====================================="
-exit 0
+if [ "$1" == "--daemon" ]; then
+    echo "Service running in background (PID $$)..."
+    while true; do sleep 10; done
+else
+    echo "====================================="
+    echo "   🟢 MyWebservice App - Version 1.0"
+    echo "   Status: Running stable"
+    echo "   Port: 8080"
+    echo "====================================="
+    exit 0
+fi
 EOF
 chmod +x "$RELEASE_v1/app.sh"
 
@@ -45,4 +50,6 @@ chmod +x "$RELEASE_v2/app.sh"
 cp "$RELEASE_v1/app.sh" "$TARGET_DIR/app.sh"
 echo "✅ Environment initialized!"
 echo "Stable version v1.0 is currently running at: $TARGET_DIR"
-"$TARGET_DIR/app.sh"
+pkill -f "app.sh --daemon" || true
+"$TARGET_DIR/app.sh" --daemon &
+echo "✅ Daemon service started in background."

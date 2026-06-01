@@ -63,8 +63,12 @@ int main(int argc, char* argv[]) {
     auto proc_mgr = std::make_shared<DeployGuard::ProcessManager>(logger);
     DeployGuard::DeployController controller(logger, proc_mgr, config);
 
-    // 4. Execute State Machine
+    // 4. Pre-flight Self-Healing Check
+    controller.checkAndRecoverState();
+
+    // 5. Execute State Machine
     bool success = controller.runDeployment();
 
     return success ? 0 : 1;
+
 }
