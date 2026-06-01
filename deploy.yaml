@@ -1,5 +1,6 @@
 deployment:
-  target_path: "/var/www/my_test_app"
+  target_path: "/Users/wenbozhi/Downloads/deploy-rollback-cli cpp/test_app_target"
   scripts:
     deploy: "./scripts/deploy.sh"
     rollback: "./scripts/rollback.sh"
+
