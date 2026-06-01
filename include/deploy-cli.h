@@ -11,6 +11,15 @@
 namespace DeployGuard {
 
     // ------------------------------------------------------------------------
+    // Configuration Structs
+    // ------------------------------------------------------------------------
+    struct Config {
+        std::string target_path;
+        std::string deploy_script;
+        std::string rollback_script;
+    };
+
+    // ------------------------------------------------------------------------
     // Enums
     // ------------------------------------------------------------------------
     enum class LogLevel {
@@ -29,7 +38,6 @@ namespace DeployGuard {
         explicit Logger(const std::string& log_file_path);
         ~Logger();
 
-        // Non-copyable
         Logger(const Logger&) = delete;
         Logger& operator=(const Logger&) = delete;
 
@@ -52,7 +60,6 @@ namespace DeployGuard {
     public:
         explicit ProcessManager(std::shared_ptr<Logger> logger);
         
-        // Executes a command, streams output to logger, and returns the exit code.
         int execute(const std::string& command);
 
     private:
@@ -65,24 +72,34 @@ namespace DeployGuard {
     // ------------------------------------------------------------------------
     class DeployController {
     public:
-        DeployController(std::shared_ptr<Logger> logger, std::shared_ptr<ProcessManager> proc_mgr);
+        DeployController(std::shared_ptr<Logger> logger, std::shared_ptr<ProcessManager> proc_mgr, Config config);
 
-        // Initiates the deployment sequence
-        bool runDeployment(const std::string& target_path);
+        bool runDeployment();
 
     private:
         std::shared_ptr<Logger> logger_;
         std::shared_ptr<ProcessManager> proc_mgr_;
+        Config config_;
 
-        bool initiateRollback(const std::string& target_path);
+        bool initiateRollback();
+    };
+
+    // ------------------------------------------------------------------------
+    // ConfigParser Class
+    // Reads and parses YAML configuration files into the Config struct.
+    // ------------------------------------------------------------------------
+    class ConfigParser {
+    public:
+        static std::optional<Config> parseYaml(const std::string& filepath, std::shared_ptr<Logger> logger);
     };
 
     // ------------------------------------------------------------------------
     // ArgumentParser Struct
-    // Cleanly parses and validates command line inputs.
     // ------------------------------------------------------------------------
     struct ArgumentParser {
-        static std::optional<std::string> parsePath(int argc, char* argv[]);
+        // Returns true if a config file is provided, false if fallback --path is used.
+        // It populates either config_file or fallback_path.
+        static bool parseArgs(int argc, char* argv[], std::string& config_file, std::string& fallback_path);
     };
 
 } // namespace DeployGuard

@@ -9,11 +9,23 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # Include directories
 include_directories(include)
 
+# Fetch yaml-cpp
+include(FetchContent)
+FetchContent_Declare(
+  yaml-cpp
+  GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+  GIT_TAG 0.8.0
+)
+FetchContent_MakeAvailable(yaml-cpp)
+
 # Source files
 file(GLOB_RECURSE SRC_FILES src/*.cpp)
 
 # Executable target
 add_executable(deploy-cli ${SRC_FILES})
+
+# Link yaml-cpp library
+target_link_libraries(deploy-cli PRIVATE yaml-cpp)
 
 # Compiler warnings
 if(MSVC)

@@ -1,0 +1,5 @@
+deployment:
+  target_path: "/var/www/my_test_app"
+  scripts:
+    deploy: "./scripts/deploy.sh"
+    rollback: "./scripts/rollback.sh"
