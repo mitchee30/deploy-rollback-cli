@@ -11,8 +11,10 @@ if [ -z "$TARGET_PATH" ]; then
     exit 1
 fi
 
+# Must match the persistent, same-disk backup location computed in deploy.sh.
 APP_NAME=$(basename "$TARGET_PATH")
-BACKUP_DIR="${TMPDIR:-/tmp}/deploy_guard_backup_${APP_NAME}"
+TARGET_PARENT_DIR="$(cd "$(dirname "$TARGET_PATH")" && pwd)"
+BACKUP_DIR="$TARGET_PARENT_DIR/.deploy_guard_backup_${APP_NAME}"
 
 # 1. Verify backup exists securely
 if [ ! -d "$BACKUP_DIR" ]; then
@@ -39,17 +41,29 @@ set -e
 
 if [ $VERIFY_CODE -ne 0 ]; then
     echo "[rollback.sh] ❌ CRITICAL: Restored application failed post-rollback verification!"
+    echo "[rollback.sh] ❌ Backup at $BACKUP_DIR is preserved for manual recovery."
     exit 1
 fi
 
-# 4. Clean up backup directory
-echo "[rollback.sh] 🧹 Cleaning up temporary backup..."
-rm -rf "$BACKUP_DIR"
-
-# 5. Restart restored application
+# 4. Restart restored application
 echo "[rollback.sh] 🔄 Restarting stable application as daemon..."
 pkill -f "app.sh --daemon" || true
 "$TARGET_PATH/app.sh" --daemon &
+
+# 5. Confirm the daemon actually came up before touching the backup.
+sleep 1
+if ! pgrep -f "app.sh --daemon" > /dev/null; then
+    echo "[rollback.sh] ❌ CRITICAL: Restored application did not stay running after restart!"
+    echo "[rollback.sh] ❌ Backup at $BACKUP_DIR is preserved for manual recovery."
+    exit 1
+fi
+
+# 6. Only now that the restart + health check are confirmed good do we clean
+# up the backup. If we crash again before this point, the next self-heal
+# still has a backup to restore from; deleting it any earlier would make a
+# second crash unrecoverable.
+echo "[rollback.sh] 🧹 Cleaning up backup (restart confirmed healthy)..."
+rm -rf "$BACKUP_DIR"
 
 echo "[rollback.sh] ✅ Rollback successfully completed. Version 1.0 is active and healthy."
 exit 0

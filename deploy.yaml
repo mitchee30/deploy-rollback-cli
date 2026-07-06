@@ -1,5 +1,8 @@
 deployment:
-  target_path: "/Users/wenbozhi/Downloads/deploy-rollback-cli cpp/test_app_target"
+  # Resolved relative to the current working directory deploy-cli is run
+  # from (same convention as the script paths below) - run it from the repo
+  # root, e.g. via `./scripts/setup_v1.sh && ./build/deploy-cli --config deploy.yaml`.
+  target_path: "./test_app_target"
   scripts:
     deploy: "./scripts/deploy.sh"
     rollback: "./scripts/rollback.sh"

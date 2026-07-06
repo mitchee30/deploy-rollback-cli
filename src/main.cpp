@@ -1,33 +1,5 @@
 #include "../include/deploy-cli.h"
 #include <iostream>
-#include <string_view>
-
-namespace DeployGuard {
-
-bool ArgumentParser::parseArgs(int argc, char* argv[], std::string& config_file, std::string& fallback_path) {
-    for (int i = 1; i < argc; ++i) {
-        std::string_view arg(argv[i]);
-        if (arg == "--config") {
-            if (i + 1 < argc) {
-                config_file = argv[i + 1];
-                return true;
-            } else {
-                std::cerr << "Error: --config option requires a value." << std::endl;
-                exit(1);
-            }
-        } else if (arg == "--path") {
-            if (i + 1 < argc) {
-                fallback_path = argv[i + 1];
-            } else {
-                std::cerr << "Error: --path option requires a value." << std::endl;
-                exit(1);
-            }
-        }
-    }
-    return !config_file.empty();
-}
-
-} // namespace DeployGuard
 
 int main(int argc, char* argv[]) {
     // 1. Initialize global logger
@@ -67,8 +39,19 @@ int main(int argc, char* argv[]) {
     controller.checkAndRecoverState();
 
     // 5. Execute State Machine
-    bool success = controller.runDeployment();
+    DeployGuard::DeploymentOutcome outcome = controller.runDeployment();
 
-    return success ? 0 : 1;
-
+    // Exit code contract (documented in README):
+    //   0 = deployment succeeded
+    //   1 = deployment failed, but rollback succeeded and the system is stable
+    //   2 = rollback itself failed; system is in an unsafe state, needs a human
+    switch (outcome) {
+        case DeployGuard::DeploymentOutcome::SUCCESS:
+            return 0;
+        case DeployGuard::DeploymentOutcome::ROLLED_BACK:
+            return 1;
+        case DeployGuard::DeploymentOutcome::CRITICAL_FAILURE:
+        default:
+            return 2;
+    }
 }

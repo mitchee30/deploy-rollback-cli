@@ -1,6 +1,6 @@
 # DeployGuard CLI (deploy-rollback-cli)
 
-![Build Status](https://img.shields.io/badge/build-passing-brightgreen)
+![CI](https://github.com/mitchee30/deploy-rollback-cli/actions/workflows/ci.yml/badge.svg)
 ![C++ Standard](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
@@ -20,14 +20,18 @@ This tool is designed to act as a reliable state-machine for CI/CD pipelines, en
 ```text
 .
 ├── CMakeLists.txt        # CMake build configuration
+├── .github/workflows/    # CI (build + unit tests)
 ├── include/
 │   └── deploy-cli.h      # Core headers and definitions
 ├── scripts/
 │   ├── build.sh          # Automated compilation script
 │   ├── deploy.sh         # Mock deployment execution script
-│   └── rollback.sh       # Mock system recovery script
-└── src/
-    └── main.cpp          # CLI entry point and state-machine logic
+│   ├── rollback.sh       # Mock system recovery script
+│   └── setup_v1.sh       # Demo environment bootstrap
+├── src/
+│   └── main.cpp          # CLI entry point and state-machine logic
+└── tests/
+    └── test_main.cpp     # doctest unit tests
 ```
 
 ## 🚀 Getting Started
@@ -67,6 +71,25 @@ Expected Workflow (Simulated):
 2. If `deploy.sh` encounters an error (e.g., exit 1), the CLI intercepts the error.
 3. The CLI immediately triggers `scripts/rollback.sh` to restore the system state.
 4. Logs are outputted to the standard output/error stream for pipeline monitoring.
+
+### Exit Codes
+
+`deploy-cli` distinguishes three outcomes so CI/CD pipelines can react differently to each:
+
+| Code | Meaning |
+| ---- | ------- |
+| `0`  | Deployment succeeded. No rollback was necessary. |
+| `1`  | Deployment failed, but the automatic rollback succeeded — the system is back to a stable, known-good state. |
+| `2`  | Rollback itself failed (or a crash-recovery rollback failed) — the system is in an **unsafe/unknown state** and needs manual intervention. |
+
+### Running Tests
+
+Unit tests (doctest) cover `ConfigParser::parseYaml` and `ArgumentParser::parseArgs`:
+
+```bash
+./scripts/build.sh
+cd build && ctest --output-on-failure
+```
 
 ## 🛠️ Future Roadmap
 

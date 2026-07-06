@@ -4,3 +4,8 @@ deploy-cli
 src/test_main
 .DS_Store
 *.log
+
+# Runtime state/backup artifacts produced by DeployController / deploy.sh /
+# rollback.sh - never something we want committed.
+*.deploy_guard.state
+.deploy_guard_backup_*

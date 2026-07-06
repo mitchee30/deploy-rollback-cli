@@ -35,6 +35,17 @@ namespace DeployGuard {
         ROLLING_BACK
     };
 
+    // Process exit code semantics (see README for the CI-facing contract):
+    //   SUCCESS          (0) - deployment succeeded, no rollback needed.
+    //   ROLLED_BACK      (1) - deployment failed but rollback succeeded; system is stable.
+    //   CRITICAL_FAILURE (2) - rollback itself failed; system is in an unknown/unsafe
+    //                          state and requires manual intervention.
+    enum class DeploymentOutcome {
+        SUCCESS = 0,
+        ROLLED_BACK = 1,
+        CRITICAL_FAILURE = 2
+    };
+
     // ------------------------------------------------------------------------
     // Logger Class
     // Handles persistent logging to a file and colored console output.
@@ -65,8 +76,12 @@ namespace DeployGuard {
     class ProcessManager {
     public:
         explicit ProcessManager(std::shared_ptr<Logger> logger);
-        
-        int execute(const std::string& command);
+
+        // Executes argv[0] with the remaining elements as its literal arguments.
+        // Uses fork+execvp directly (no shell involved), so argument values
+        // (e.g. paths containing quotes/spaces/shell metacharacters) can never
+        // be reinterpreted as additional shell commands.
+        int execute(const std::vector<std::string>& args);
 
     private:
         std::shared_ptr<Logger> logger_;
@@ -81,14 +96,14 @@ namespace DeployGuard {
         DeployController(std::shared_ptr<Logger> logger, std::shared_ptr<ProcessManager> proc_mgr, Config config);
 
         void checkAndRecoverState();
-        bool runDeployment();
+        DeploymentOutcome runDeployment();
 
     private:
         std::shared_ptr<Logger> logger_;
         std::shared_ptr<ProcessManager> proc_mgr_;
         Config config_;
 
-        bool initiateRollback();
+        DeploymentOutcome initiateRollback();
         void writeState(DeploymentState state);
         DeploymentState readState();
         void clearState();

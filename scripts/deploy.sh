@@ -3,7 +3,11 @@ set -e
 trap 'echo "[deploy.sh] ❌ CRITICAL: Unhandled error on line $LINENO. Aborting deployment!" >&2' ERR
 
 TARGET_PATH="$1"
-WORKSPACE_DIR="/Users/wenbozhi/Downloads/deploy-rollback-cli cpp"
+
+# Derive the project root from this script's own location (works after a
+# fresh clone on any machine/CI, no dependency on a local absolute path).
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+WORKSPACE_DIR="$( dirname "$SCRIPT_DIR" )"
 RELEASE_V2="$WORKSPACE_DIR/releases/v2.0"
 
 echo "[deploy.sh] 🚀 Starting deployment to target: $TARGET_PATH"
@@ -30,11 +34,14 @@ else
     echo "[deploy.sh] ✅ No active processes found."
 fi
 
-# 2. Dynamic platform-appropriate temp backup path
+# 2. Backup path on the same persistent disk as the target (NOT the system
+# temp dir - tmpfs-backed /tmp is wiped on reboot, which would destroy the
+# backup exactly when the power-loss/crash self-healing needs it most).
 APP_NAME=$(basename "$TARGET_PATH")
-BACKUP_DIR="${TMPDIR:-/tmp}/deploy_guard_backup_${APP_NAME}"
+TARGET_PARENT_DIR="$(cd "$(dirname "$TARGET_PATH")" && pwd)"
+BACKUP_DIR="$TARGET_PARENT_DIR/.deploy_guard_backup_${APP_NAME}"
 
-echo "[deploy.sh] 📦 Creating temporary backup of v1.0 in: $BACKUP_DIR"
+echo "[deploy.sh] 📦 Creating persistent backup of v1.0 in: $BACKUP_DIR"
 rm -rf "$BACKUP_DIR"
 mkdir -p "$BACKUP_DIR"
 

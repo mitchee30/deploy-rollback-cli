@@ -1,6 +1,7 @@
 #!/bin/bash
 # Set up workspace directories
-WORKSPACE_DIR="/Users/wenbozhi/Downloads/deploy-rollback-cli cpp"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+WORKSPACE_DIR="$( dirname "$SCRIPT_DIR" )"
 TARGET_DIR="$WORKSPACE_DIR/test_app_target"
 RELEASE_v1="$WORKSPACE_DIR/releases/v1.0"
 RELEASE_v2="$WORKSPACE_DIR/releases/v2.0"
