@@ -84,7 +84,10 @@ Expected Workflow (Simulated):
 
 ### Running Tests
 
-Unit tests (doctest) cover `ConfigParser::parseYaml` and `ArgumentParser::parseArgs`:
+Unit tests (doctest) cover `ConfigParser::parseYaml`, `ArgumentParser::parseArgs`, and
+`ProcessManager`/`DeployController` — including shell-injection safety (malicious
+`target_path` values), the fork/exec hang-avoidance behavior, and all three exit-code
+outcomes above:
 
 ```bash
 ./scripts/build.sh

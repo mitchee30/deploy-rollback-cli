@@ -43,11 +43,11 @@ else()
 endif()
 
 # ------------------------------------------------------------------------
-# Unit tests (doctest) - covers the pure-logic pieces: ConfigParser and
-# ArgumentParser. Excludes main.cpp/process_manager.cpp/deploy_controller.cpp
-# on purpose: main.cpp provides its own main() (would collide with doctest's),
-# and the other two shell out to real processes/filesystem state rather than
-# being pure logic.
+# Unit tests (doctest). Excludes only main.cpp, since it provides its own
+# main() that would collide with doctest's. process_manager.cpp and
+# deploy_controller.cpp are included so the fork/exec process-handling logic
+# (shell-injection safety, hang-on-backgrounded-grandchild behavior, exit
+# code semantics) is actually exercised by tests instead of only compiled.
 # ------------------------------------------------------------------------
 enable_testing()
 
@@ -56,6 +56,8 @@ add_executable(deploy-cli-tests
     src/config_parser.cpp
     src/logger.cpp
     src/argument_parser.cpp
+    src/process_manager.cpp
+    src/deploy_controller.cpp
 )
 target_link_libraries(deploy-cli-tests PRIVATE yaml-cpp doctest::doctest)
 
