@@ -36,7 +36,11 @@ int main(int argc, char* argv[]) {
     DeployGuard::DeployController controller(logger, proc_mgr, config);
 
     // 4. Pre-flight Self-Healing Check
-    controller.checkAndRecoverState();
+    DeployGuard::DeploymentOutcome recovery = controller.checkAndRecoverState();
+    if (recovery == DeployGuard::DeploymentOutcome::CRITICAL_FAILURE) {
+        logger->log(DeployGuard::LogLevel::ERROR, "Crash recovery failed. Aborting — manual intervention required.");
+        return 2;
+    }
 
     // 5. Execute State Machine
     DeployGuard::DeploymentOutcome outcome = controller.runDeployment();

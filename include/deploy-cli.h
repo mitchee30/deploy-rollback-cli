@@ -71,7 +71,7 @@ namespace DeployGuard {
 
     // ------------------------------------------------------------------------
     // ProcessManager Class
-    // Encapsulates popen logic using RAII principles and realtime streaming.
+    // Encapsulates fork/execvp logic using RAII principles and realtime streaming.
     // ------------------------------------------------------------------------
     class ProcessManager {
     public:
@@ -95,7 +95,7 @@ namespace DeployGuard {
     public:
         DeployController(std::shared_ptr<Logger> logger, std::shared_ptr<ProcessManager> proc_mgr, Config config);
 
-        void checkAndRecoverState();
+        DeploymentOutcome checkAndRecoverState();
         DeploymentOutcome runDeployment();
 
     private:

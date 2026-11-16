@@ -118,18 +118,20 @@ void DeployController::clearState() {
     std::remove(getStateFilePath().c_str());
 }
 
-void DeployController::checkAndRecoverState() {
+DeploymentOutcome DeployController::checkAndRecoverState() {
     DeploymentState current_state = readState();
 
     if (current_state == DeploymentState::INSTALLING) {
         logger_->log(LogLevel::ERROR, "CRITICAL: Detected interrupted installation (e.g., power loss or crash)!");
         logger_->log(LogLevel::WARNING, "Initiating self-healing auto-recovery...");
-        initiateRollback();
+        return initiateRollback();
     } else if (current_state == DeploymentState::ROLLING_BACK) {
         logger_->log(LogLevel::ERROR, "CRITICAL: Detected interrupted rollback!");
         logger_->log(LogLevel::WARNING, "Attempting to resume rollback cleanup...");
-        initiateRollback();
+        return initiateRollback();
     }
+
+    return DeploymentOutcome::SUCCESS;
 }
 
 } // namespace DeployGuard

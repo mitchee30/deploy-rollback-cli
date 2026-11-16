@@ -4,9 +4,9 @@
 ![C++ Standard](https://img.shields.io/badge/C%2B%2B-17-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
-A lightweight, fault-tolerant Command-Line Interface (CLI) built with modern C++ for automated software deployment and intelligent state rollback. 
+A fault-tolerant CLI built in C++17 that runs deployment scripts and automatically rolls back on failure.
 
-This tool is designed to act as a reliable state-machine for CI/CD pipelines, ensuring that any deployment failure triggers an immediate and clean rollback to a safe state, minimizing system downtime.
+Acts as a deployment state machine for CI/CD pipelines: if a deployment script exits non-zero, the CLI triggers a rollback script to restore the previous state.
 
 ## ✨ Key Features
 
@@ -96,7 +96,7 @@ cd build && ctest --output-on-failure
 
 ## 🛠️ Future Roadmap
 
-* [x] Replace `std::system` with POSIX `popen` for real-time stdout/stderr streaming.
+* [x] Replace `std::system` with POSIX `fork/execvp` for real-time stdout/stderr streaming.
 * [ ] Implement a persistent logging system to write deployment histories to `.log` files.
 * [ ] Add JSON configuration parsing for complex deployment workflows.
 
