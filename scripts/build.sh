@@ -13,7 +13,7 @@ mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
 echo "Running CMake..."
-cmake -DCMAKE_POLICY_VERSION_MINIMUM=3.5 ..
+cmake ..
 
 echo "Building project..."
 make

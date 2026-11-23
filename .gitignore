@@ -1,4 +1,5 @@
 build/
+build-*/
 *.o
 deploy-cli
 src/test_main
@@ -9,3 +10,4 @@ src/test_main
 # rollback.sh - never something we want committed.
 *.deploy_guard.state
 .deploy_guard_backup_*
+.deploy_guard_*

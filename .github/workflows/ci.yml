@@ -8,16 +8,20 @@ on:
 
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+        run: cmake -S . -B build -DDEPLOYGUARD_WERROR=ON
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build build -j 4
 
       - name: Run unit tests
         working-directory: build
-        run: ctest --output-on-failure
+        run: ctest --output-on-failure -j 4
