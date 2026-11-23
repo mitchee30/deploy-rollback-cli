@@ -1,61 +1,107 @@
-#include "../include/deploy-cli.h"
+#include "deployguard/argument_parser.h"
+#include "deployguard/config.h"
+#include "deployguard/deploy_controller.h"
+#include "deployguard/logger.h"
+#include "deployguard/process_manager.h"
+#include "deployguard/signals.h"
+
+#include <cerrno>
+#include <csignal>
 #include <iostream>
+#include <memory>
+
+#include <fcntl.h>
+#include <unistd.h>
+
+using namespace DeployGuard;
+
+namespace {
+
+// If we are started with stdin/stdout/stderr closed, the next open() would
+// reuse descriptor 0, 1 or 2 - and e.g. log output could end up in the lock
+// file. Point any closed standard descriptor at /dev/null first.
+void ensureStandardFdsOpen() {
+    for (int fd = STDIN_FILENO; fd <= STDERR_FILENO; ++fd) {
+        if (::fcntl(fd, F_GETFD) == -1 && errno == EBADF) {
+            const int null_fd = ::open("/dev/null", O_RDWR);
+            if (null_fd != -1 && null_fd != fd) {
+                ::dup2(null_fd, fd);
+                ::close(null_fd);
+            }
+        }
+    }
+}
+
+const char* signalDescription(int sig) {
+    switch (sig) {
+        case SIGINT:  return "SIGINT (Ctrl+C)";
+        case SIGTERM: return "SIGTERM";
+        case SIGHUP:  return "SIGHUP (terminal closed)";
+        default:      return "a termination signal";
+    }
+}
+
+} // namespace
 
 int main(int argc, char* argv[]) {
-    // 1. Initialize global logger
-    auto logger = std::make_shared<DeployGuard::Logger>("deploy_guard.log");
+    ensureStandardFdsOpen();
 
-    // 2. Parse Arguments
-    std::string config_file;
-    std::string fallback_path;
-    bool has_config = DeployGuard::ArgumentParser::parseArgs(argc, argv, config_file, fallback_path);
+    const CliParseResult parsed = ArgumentParser::parse(argc, argv);
+    if (!parsed.ok()) {
+        std::cerr << "deploy-cli: " << parsed.error << "\n"
+                  << "Try 'deploy-cli --help' for more information.\n";
+        return toExitCode(DeploymentOutcome::ABORTED);
+    }
+    const CliOptions& options = parsed.options;
+    if (options.show_help) {
+        std::cout << ArgumentParser::usage();
+        return 0;
+    }
+    if (options.show_version) {
+        std::cout << "deploy-cli " << DEPLOYGUARD_VERSION << "\n";
+        return 0;
+    }
 
-    DeployGuard::Config config;
+    installSignalHandlers();
+    auto logger = std::make_shared<Logger>(options.log_file);
 
-    if (has_config) {
-        // Parse YAML configuration
-        auto parsed_config = DeployGuard::ConfigParser::parseYaml(config_file, logger);
-        if (!parsed_config.has_value()) {
-            return 1; // Logger already printed the error
+    Config config;
+    if (!options.config_file.empty()) {
+        std::optional<Config> loaded = ConfigParser::parseYaml(options.config_file, logger);
+        if (!loaded) {
+            return toExitCode(DeploymentOutcome::ABORTED);  // reason already logged
         }
-        config = parsed_config.value();
+        config = *loaded;
     } else {
-        // Fallback to basic path with default scripts
-        if (fallback_path.empty()) {
-            std::cerr << "Error: You must provide either --config <yaml> or --path <target_path>" << std::endl;
-            return 1;
-        }
-        logger->log(DeployGuard::LogLevel::INFO, "No config provided. Using fallback hardcoded script paths.");
-        config.target_path = fallback_path;
+        logger->log(LogLevel::INFO, "No --config given: using the bundled hooks in ./scripts/");
+        config.target_path = options.target_path;
         config.deploy_script = "./scripts/deploy.sh";
         config.rollback_script = "./scripts/rollback.sh";
     }
-
-    // 3. Initialize Dependency Injection
-    auto proc_mgr = std::make_shared<DeployGuard::ProcessManager>(logger);
-    DeployGuard::DeployController controller(logger, proc_mgr, config);
-
-    // 4. Pre-flight Self-Healing Check
-    DeployGuard::DeploymentOutcome recovery = controller.checkAndRecoverState();
-    if (recovery == DeployGuard::DeploymentOutcome::CRITICAL_FAILURE) {
-        logger->log(DeployGuard::LogLevel::ERROR, "Crash recovery failed. Aborting — manual intervention required.");
-        return 2;
+    if (options.timeout_seconds) {
+        config.timeout_seconds = *options.timeout_seconds;
+    }
+    if (const std::string problem = ConfigParser::validate(config); !problem.empty()) {
+        logger->log(LogLevel::ERROR, "Invalid configuration: " + problem);
+        return toExitCode(DeploymentOutcome::ABORTED);
     }
 
-    // 5. Execute State Machine
-    DeployGuard::DeploymentOutcome outcome = controller.runDeployment();
+    // Polled by the deployment loop. Logs which signal arrived, once.
+    auto announced = std::make_shared<bool>(false);
+    auto cancel_requested = [logger, announced]() {
+        if (!cancellationRequested()) {
+            return false;
+        }
+        if (!*announced) {
+            *announced = true;
+            logger->log(LogLevel::WARNING, std::string("Received ") + signalDescription(cancellationSignal()) +
+                                               ": cancelling the deployment.");
+        }
+        return true;
+    };
 
-    // Exit code contract (documented in README):
-    //   0 = deployment succeeded
-    //   1 = deployment failed, but rollback succeeded and the system is stable
-    //   2 = rollback itself failed; system is in an unsafe state, needs a human
-    switch (outcome) {
-        case DeployGuard::DeploymentOutcome::SUCCESS:
-            return 0;
-        case DeployGuard::DeploymentOutcome::ROLLED_BACK:
-            return 1;
-        case DeployGuard::DeploymentOutcome::CRITICAL_FAILURE:
-        default:
-            return 2;
-    }
+    auto proc_mgr = std::make_shared<ProcessManager>(logger);
+    DeployController controller(logger, proc_mgr, config, cancel_requested);
+    const DeploymentOutcome outcome = options.dry_run ? controller.dryRun() : controller.run();
+    return toExitCode(outcome);
 }
