@@ -120,3 +120,33 @@ TEST_CASE("stateName(DeploymentState)") {
     CHECK(std::string(stateName(DeploymentState::INSTALLING)) == std::string("INSTALLING"));
     CHECK(std::string(stateName(DeploymentState::ROLLING_BACK)) == std::string("ROLLING_BACK"));
 }
+
+TEST_CASE("StateStore: a path that cannot be stat'ed is invalid, not STABLE") {
+    TempDir dir;
+    writeFile(dir / "a_file", "x");
+    const StateSnapshot s = StateStore(dir / "a_file/state").read();  // ENOTDIR
+    CHECK_FALSE(s.valid);
+    CHECK(contains(s.detail, "cannot stat"));
+}
+
+TEST_CASE("StateStore: clear() reports a state path it cannot remove") {
+    TempDir dir;
+    fs::create_directory(dir / "state");  // unlink() fails on a directory
+    std::string error;
+    CHECK_FALSE(StateStore(dir / "state").clear(&error));
+    CHECK(contains(error, "cannot remove"));
+}
+
+TEST_CASE("StateStore: blank lines in the details are ignored") {
+    TempDir dir;
+    writeFile(dir / "state", "ROLLING_BACK\n\npid=1\n\n");
+    const StateSnapshot s = StateStore(dir / "state").read();
+    CHECK(s.valid);
+    CHECK(s.state == DeploymentState::ROLLING_BACK);
+    CHECK(s.detail == std::string("pid=1"));
+}
+
+TEST_CASE("deriveTargetPaths: the root directory gets a usable name") {
+    const TargetPaths p = deriveTargetPaths("/");
+    CHECK(p.state_file == std::string("/.deploy_guard_root.state"));
+}

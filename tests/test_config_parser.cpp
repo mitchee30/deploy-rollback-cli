@@ -151,3 +151,22 @@ TEST_CASE("ConfigParser::validate") {
     bad.health_check_interval_seconds = -1;
     CHECK_FALSE(ConfigParser::validate(bad).empty());
 }
+
+TEST_CASE("ConfigParser: structural type errors") {
+    ConfigFixture f;
+    SUBCASE("deployment is a list") {
+        CHECK_FALSE(f.parse("deployment:\n  - a\n  - b\n"));
+        CHECK(contains(f.log(), "'deployment' must be a mapping"));
+    }
+    SUBCASE("a number given as a mapping") {
+        CHECK_FALSE(f.parse(std::string(kMinimal) + "  timeout_seconds:\n    value: 5\n"));
+        CHECK(contains(f.log(), "must be a whole number"));
+    }
+}
+
+TEST_CASE("ConfigParser::validate requires a deploy script") {
+    Config c;
+    c.target_path = "./app";
+    c.rollback_script = "./r.sh";
+    CHECK(contains(ConfigParser::validate(c), "deploy script"));
+}

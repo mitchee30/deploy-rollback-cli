@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(deploy-rollback-cli VERSION 0.3.0 LANGUAGES CXX)
+project(deploy-rollback-cli VERSION 0.3.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -126,6 +126,7 @@ if(DEPLOYGUARD_BUILD_TESTS)
         tests/test_file_lock.cpp
         tests/test_logger.cpp
         tests/test_process_manager.cpp
+        tests/test_signals.cpp
         tests/test_state_store.cpp
     )
     target_link_libraries(deploy-cli-tests PRIVATE deployguard_core doctest::doctest)

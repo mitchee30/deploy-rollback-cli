@@ -67,6 +67,14 @@ bool checkExecutable(const std::string& program, std::string* error) {
     return false;
 }
 
+LogLevel levelFor(DeploymentOutcome outcome) {
+    switch (outcome) {
+        case DeploymentOutcome::SUCCESS:     return LogLevel::SUCCESS;
+        case DeploymentOutcome::ROLLED_BACK: return LogLevel::WARNING;
+        default:                             return LogLevel::ERROR;
+    }
+}
+
 std::string detailSuffix(const StateSnapshot& snapshot) {
     return snapshot.detail.empty() ? "" : " (" + snapshot.detail + ")";
 }
@@ -147,10 +155,7 @@ DeploymentOutcome DeployController::run() {
     // 4-6. Deploy, verify, commit (or roll back).
     const DeploymentOutcome outcome = runDeployment();
 
-    const LogLevel level = outcome == DeploymentOutcome::SUCCESS       ? LogLevel::SUCCESS
-                           : outcome == DeploymentOutcome::ROLLED_BACK ? LogLevel::WARNING
-                                                                       : LogLevel::ERROR;
-    logger_->log(level, std::string("Finished: ") + outcomeName(outcome) + " (exit code " +
+    logger_->log(levelFor(outcome), std::string("Finished: ") + outcomeName(outcome) + " (exit code " +
                             std::to_string(toExitCode(outcome)) + ") in " + formatSeconds(Clock::now() - started));
     return outcome;
 }

@@ -162,14 +162,19 @@ macOS. yaml-cpp and doctest are downloaded by CMake.
 scripts/build.sh                      # or: cmake -S . -B build && cmake --build build
 cd build
 ctest --output-on-failure -j 8        # everything (~30 s)
-ctest -L unit                         # 109 unit tests (doctest)
+ctest -L unit                         # 134 unit tests (doctest)
 ctest -L integration                  # 6 suites driving the real binary
 ```
 
+Line coverage of `src/` is about 89% (gcov). Most of the rest is error
+handling for failing system calls (e.g. `fsync()` failing) and the code that
+runs in the forked child between `fork()` and `exec()`, which gcov cannot
+record.
+
 Sanitizer build: `scripts/build.sh -DDEPLOYGUARD_SANITIZE=ON`
 (AddressSanitizer + UndefinedBehaviorSanitizer). CI runs GCC and Clang on
-Linux, Clang on macOS, a sanitizer build, shellcheck on every script, and the
-demo, all with warnings treated as errors.
+Linux, Clang on macOS, a sanitizer build, a coverage build, shellcheck on
+every script, and the demo, all with warnings treated as errors.
 
 ## Project layout
 
