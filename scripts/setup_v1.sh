@@ -1,56 +1,28 @@
-#!/bin/bash
-# Set up workspace directories
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-WORKSPACE_DIR="$( dirname "$SCRIPT_DIR" )"
-TARGET_DIR="$WORKSPACE_DIR/test_app_target"
-RELEASE_v1="$WORKSPACE_DIR/releases/v1.0"
-RELEASE_v2="$WORKSPACE_DIR/releases/v2.0"
+#!/usr/bin/env bash
+# Resets the demo: a target directory with release v1.0 installed and running.
+#
+#   usage: setup_v1.sh [target_dir]      (default: <repo>/test_app_target)
+set -euo pipefail
 
-echo "Initializing Demo Environment..."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-# Clean up previous runs
-rm -rf "$TARGET_DIR" "$WORKSPACE_DIR/releases"
-mkdir -p "$RELEASE_v1"
-mkdir -p "$RELEASE_v2"
-mkdir -p "$TARGET_DIR"
+ROOT="$(dirname "$SCRIPT_DIR")"
+TARGET="${1:-$ROOT/test_app_target}"
+TARGET="${TARGET%/}"
 
-# Create v1.0 file (Stable Version)
-cat << 'EOF' > "$RELEASE_v1/app.sh"
-#!/bin/bash
-if [ "$1" == "--daemon" ]; then
-    echo "Service running in background (PID $$)..."
-    while true; do sleep 10; done
-else
-    echo "====================================="
-    echo "   🟢 MyWebservice App - Version 1.0"
-    echo "   Status: Running stable"
-    echo "   Port: 8080"
-    echo "====================================="
-    exit 0
-fi
-EOF
-chmod +x "$RELEASE_v1/app.sh"
+mkdir -p "$TARGET"
+stop_app "$TARGET"
 
-# Create v2.0 file (Broken Version)
-cat << 'EOF' > "$RELEASE_v2/app.sh"
-#!/bin/bash
-echo "====================================="
-echo "   🔴 MyWebservice App - Version 2.0"
-echo "   Status: Starting..."
-echo "====================================="
-sleep 0.5
-echo "[v2.0] Loading application modules..."
-sleep 0.5
-echo "[v2.0] ❌ FATAL ERROR: Database schema mismatch! (Column 'avatar_url' is missing in table 'users')" >&2
-echo "[v2.0] ❌ Failed to start application!" >&2
-exit 1
-EOF
-chmod +x "$RELEASE_v2/app.sh"
+# Start from a clean slate: no leftover backup or crash-recovery state.
+# (The lock file is left alone; deleting a lock file is never safe.)
+_parent_and_name "$TARGET"
+rm -rf "$_PARENT/.deploy_guard_${_NAME}.backup" "$_PARENT/.deploy_guard_${_NAME}.backup.tmp"
+rm -f "$_PARENT/.deploy_guard_${_NAME}.state" "$_PARENT/.deploy_guard_${_NAME}.state.tmp"
 
-# Copy v1.0 to Target to simulate an initially active stable installation
-cp "$RELEASE_v1/app.sh" "$TARGET_DIR/app.sh"
-echo "✅ Environment initialized!"
-echo "Stable version v1.0 is currently running at: $TARGET_DIR"
-pkill -f "app.sh --daemon" || true
-"$TARGET_DIR/app.sh" --daemon &
-echo "✅ Daemon service started in background."
+clear_dir "$TARGET"
+cp -a "$ROOT/releases/v1.0/." "$TARGET/"
+start_app "$TARGET"
+wait_until_healthy "$TARGET" 5 || die "v1.0 did not start"
+log "v1.0 is installed and running in $TARGET"

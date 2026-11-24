@@ -1,13 +1,20 @@
+# Build output
 build/
 build-*/
 *.o
-deploy-cli
-src/test_main
+
+# Editor / OS
 .DS_Store
+.vscode/
+.idea/
+
+# Logs (deploy_guard.log, demo app logs)
 *.log
 
-# Runtime state/backup artifacts produced by DeployController / deploy.sh /
-# rollback.sh - never something we want committed.
-*.deploy_guard.state
-.deploy_guard_backup_*
+# Runtime files created next to a target by deploy-cli and the demo hooks:
+#   .deploy_guard_<name>.{state,lock,backup}  and  .demo_app_<name>.{pid,log}
 .deploy_guard_*
+.demo_app_*
+
+# The demo target is created by scripts/setup_v1.sh
+test_app_target/

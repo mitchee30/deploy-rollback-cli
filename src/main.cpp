@@ -77,6 +77,7 @@ int main(int argc, char* argv[]) {
         config.target_path = options.target_path;
         config.deploy_script = "./scripts/deploy.sh";
         config.rollback_script = "./scripts/rollback.sh";
+        config.health_check_script = "./scripts/health_check.sh";
     }
     if (options.timeout_seconds) {
         config.timeout_seconds = *options.timeout_seconds;

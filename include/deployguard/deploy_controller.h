@@ -37,7 +37,8 @@ int toExitCode(DeploymentOutcome outcome);
 //   3. preflight check the target exists and every hook is executable -
 //                before anything is modified (a missing rollback script is
 //                found now, not when it is needed)
-//   4. deploy    state := INSTALLING, run the deploy hook
+//   4. deploy    delete a stale backup dir, state := INSTALLING, run the
+//                deploy hook
 //   5. verify    run the health check hook (with retries), if configured
 //   6. commit    clear the state file
 //
