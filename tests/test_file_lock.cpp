@@ -102,3 +102,11 @@ TEST_CASE("FileLock: the lock is not inherited by processes we start (O_CLOEXEC)
 
     killIfRunning(daemon);
 }
+
+TEST_CASE("FileLock::isAvailable reports a lock path it cannot open") {
+    TempDir dir;
+    writeFile(dir / "a_file", "x");
+    std::string error;
+    CHECK_FALSE(FileLock::isAvailable(dir / "a_file/app.lock", &error));  // ENOTDIR
+    CHECK(contains(error, "cannot open lock file"));
+}

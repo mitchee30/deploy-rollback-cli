@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.1
+
+- 25 more unit tests (134 in total): signal handling, console output modes,
+  more state-file and pre-flight edge cases, Ctrl+C while waiting between
+  health check attempts. Line coverage of `src/` is 89%.
+- CI job that measures line coverage.
+- Small clean-ups found by clang-tidy.
+
 ## 0.3.0
 
 ### Demo hooks

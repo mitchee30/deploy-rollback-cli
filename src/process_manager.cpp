@@ -118,7 +118,7 @@ void closeInheritedFds(int keep) {
     // Handlers are reset by exec automatically, but *ignored* signals stay
     // ignored. deploy-cli ignores SIGPIPE for itself; hook scripts must get
     // the normal behaviour (e.g. `producer | head` terminating the producer).
-    ::signal(SIGPIPE, SIG_DFL);
+    (void)::signal(SIGPIPE, SIG_DFL);
     sigset_t empty_mask;
     sigemptyset(&empty_mask);
     ::sigprocmask(SIG_SETMASK, &empty_mask, nullptr);

@@ -61,3 +61,22 @@ jobs:
       - uses: actions/checkout@v4
       - name: shellcheck
         run: shellcheck scripts/*.sh scripts/lib/*.sh releases/*/app.sh tests/integration/*.sh
+
+  # Line coverage of src/ by all tests, shown in the job summary.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gcovr
+        run: pipx install gcovr
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS=--coverage -DCMAKE_EXE_LINKER_FLAGS=--coverage
+      - name: Build
+        run: cmake --build build --parallel 4
+      - name: Tests
+        working-directory: build
+        run: ctest --output-on-failure -j 4
+      - name: Coverage report
+        run: |
+          gcovr -r . --filter 'src/' build | tee coverage.txt
+          { echo '### Line coverage'; echo '```'; cat coverage.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"

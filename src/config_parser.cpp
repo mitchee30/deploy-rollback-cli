@@ -29,7 +29,7 @@ std::optional<std::string> optionalString(const YAML::Node& parent, const std::s
     if (!node.IsScalar()) {
         throw ConfigError("'" + where + key + "' must be a string");
     }
-    const std::string value = node.as<std::string>();
+    std::string value = node.as<std::string>();  // not const: allows the move on return
     if (value.empty()) {
         throw ConfigError("'" + where + key + "' must not be empty");
     }

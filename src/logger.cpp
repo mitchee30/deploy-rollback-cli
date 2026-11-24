@@ -16,7 +16,7 @@ namespace {
 
 // Lines longer than this without a newline are written out in pieces, so a
 // script that prints megabytes without '\n' cannot grow our buffer forever.
-constexpr size_t kMaxPendingLine = 64 * 1024;
+constexpr size_t kMaxPendingLine = size_t{64} * 1024;
 
 std::string timestamp() {
     const auto now = std::chrono::system_clock::now();

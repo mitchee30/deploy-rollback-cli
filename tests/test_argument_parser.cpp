@@ -138,3 +138,9 @@ TEST_CASE("ArgumentParser: usage text documents every exit code") {
     }
     CHECK(usage.find("--dry-run") != std::string::npos);
 }
+
+TEST_CASE("ArgumentParser: --log-file without a value is an error") {
+    const auto r = parse({"--path", "x", "--log-file"});
+    CHECK_FALSE(r.ok());
+    CHECK(r.error.find("--log-file") != std::string::npos);
+}

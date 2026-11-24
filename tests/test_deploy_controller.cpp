@@ -431,3 +431,64 @@ TEST_CASE("DeployController: recovery still gets the backup of the interrupted d
     CHECK(f.controller(f.config()).run() == DeploymentOutcome::SUCCESS);
     CHECK(f.ranHooks() == std::string("rollback\ndeploy\n"));
 }
+
+// ---------------------------------------------------------------------------
+// More edge cases
+// ---------------------------------------------------------------------------
+
+TEST_CASE("DeployController: a target whose parent directory is missing is reported as missing") {
+    // The lock file lives next to the target, so this fails at the lock;
+    // the message must still name the real problem.
+    Fixture f;
+    Config c = f.config();
+    c.target_path = f.dir / "no_parent/app";
+    CHECK(f.controller(c).run() == DeploymentOutcome::ABORTED);
+    CHECK(contains(f.log(), "does not exist"));
+    CHECK(f.ranHooks().empty());
+}
+
+TEST_CASE("DeployController: a hook path that is a directory fails pre-flight") {
+    Fixture f;
+    fs::create_directory(f.dir / "hooks_dir");
+    Config c = f.config();
+    c.deploy_script = f.dir / "hooks_dir";
+    CHECK(f.controller(c).run() == DeploymentOutcome::ABORTED);
+    CHECK(contains(f.log(), "not a regular file"));
+}
+
+TEST_CASE("DeployController: cancellation noticed right after the deploy hook still rolls back") {
+    // No health check: the last chance to honour Ctrl+C is before committing.
+    Fixture f;
+    int calls = 0;
+    auto cancel = [&calls] { return ++calls > 1; };  // false at the very start, then true
+    CHECK(f.controller(f.config(), cancel).run() == DeploymentOutcome::ROLLED_BACK);
+    CHECK(f.ranHooks() == std::string("deploy\nrollback\n"));
+}
+
+TEST_CASE("DeployController: Ctrl+C while waiting between health check attempts is handled promptly") {
+    Fixture f;
+    f.setHealth("exit 1");
+    Config c = f.config(true);
+    c.health_check_interval_seconds = 30;  // without a responsive wait this test would take 60s
+    auto cancel = [&f] { return contains(f.ranHooks(), "health"); };
+    const auto start = std::chrono::steady_clock::now();
+    CHECK(f.controller(c, cancel).run() == DeploymentOutcome::ROLLED_BACK);
+    CHECK(std::chrono::steady_clock::now() - start < seconds(10));
+    CHECK(f.ranHooks() == std::string("deploy\nhealth\nrollback\n"));
+    CHECK(contains(f.log(), "cancelled during the health check"));
+}
+
+TEST_CASE("DeployController: --dry-run reports a corrupt state file") {
+    Fixture f;
+    writeFile(f.stateFile(), "garbage\n");
+    CHECK(f.controller(f.config()).dryRun() == DeploymentOutcome::ABORTED);
+    CHECK(contains(f.log(), "corrupt"));
+}
+
+TEST_CASE("DeployController: --dry-run mentions a pending recovery") {
+    Fixture f;
+    REQUIRE(StateStore(f.stateFile()).write(DeploymentState::INSTALLING));
+    CHECK(f.controller(f.config()).dryRun() == DeploymentOutcome::SUCCESS);
+    CHECK(contains(f.log(), "would first run the rollback hook"));
+    CHECK(f.ranHooks().empty());
+}

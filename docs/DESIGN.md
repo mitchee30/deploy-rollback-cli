@@ -166,7 +166,7 @@ not tell apart from "deployed and rolled back".
 
 ## 8. Testing strategy
 
-* **Unit tests** (doctest, 109 cases) run each component against small
+* **Unit tests** (doctest, 134 cases) run each component against small
   `/bin/sh` scripts in a fresh temporary directory per test, so `ctest -j`
   runs them in parallel. They cover every edge of the state machine, the
   process handling (timeouts, process-group kills, SIGKILL escalation, exec
@@ -176,6 +176,9 @@ not tell apart from "deployed and rolled back".
   kernel releasing the lock of a process that was SIGKILLed mid-deployment.
 * **Sanitizers**: the whole suite also runs under AddressSanitizer +
   UndefinedBehaviorSanitizer in CI.
+* **Coverage**: about 89% of the lines in `src/`; CI prints the per-file
+  report. The uncovered lines are mostly failing-syscall branches and the
+  child side of `fork()`, which gcov cannot record because the child execs.
 * **Not covered**: a real power cut (the fsync ordering is reasoned about,
   not tested) and network file systems.
 
