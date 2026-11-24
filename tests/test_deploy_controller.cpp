@@ -381,7 +381,12 @@ TEST_CASE("DeployController: $1 is the absolute target path even when the config
     const DeploymentOutcome outcome = f.controller(c).run();
     fs::current_path(previous);
     CHECK(outcome == DeploymentOutcome::SUCCESS);
-    CHECK(readFile(out) == f.target);
+    const std::string received = readFile(out);
+    REQUIRE_FALSE(received.empty());
+    CHECK(received.front() == '/');
+    // The same directory - compared with equivalent(), not as strings: on
+    // macOS /var is a symlink to /private/var, so the spelling may differ.
+    CHECK(fs::equivalent(received, f.target));
 }
 
 TEST_CASE("DeployController: a target path full of shell metacharacters is passed literally") {
