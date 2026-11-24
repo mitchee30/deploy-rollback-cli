@@ -14,9 +14,11 @@
 #   The target is not modified until a complete backup of it has been
 #   committed (copied to a temporary directory, then renamed into place).
 #
-# So if rollback.sh finds a backup, it is complete and belongs to this
-# deployment (deploy-cli deletes leftover backups before running this hook);
-# if it finds none, the target was never touched.
+# So if rollback.sh finds a backup, it is complete; if it finds none, the
+# target was never touched. The backup is also tagged with the deployment's
+# $DEPLOYGUARD_RUN_ID, so rollback.sh can check it is restoring *this*
+# deployment's backup and not a leftover (deploy-cli deletes leftovers
+# before each deployment too - two independent safeguards).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,14 +36,15 @@ RELEASE_DIR="$(dirname "$SCRIPT_DIR")/releases/$RELEASE"
 BACKUP="$(backup_dir_for "$TARGET")"
 log "deploying $RELEASE to $TARGET"
 
-# 1. Back up the current version - hidden files included - and commit the
-#    backup with an atomic rename. (Also clears leftovers when this script
-#    is run on its own, without deploy-cli.)
-rm -rf "$BACKUP" "$BACKUP.tmp"
+# 1. Back up the current version - hidden files included - tag it with this
+#    deployment's run id, and commit it with an atomic rename. (Also clears
+#    leftovers when this script is run on its own, without deploy-cli.)
+rm -rf "$BACKUP" "$BACKUP.tmp" "$BACKUP.run_id"
 mkdir -p "$BACKUP.tmp"
 cp -a "$TARGET/." "$BACKUP.tmp/"
+printf '%s\n' "${DEPLOYGUARD_RUN_ID:-}" >"$BACKUP.run_id"
 mv "$BACKUP.tmp" "$BACKUP"
-log "backup committed: $BACKUP"
+log "backup committed: $BACKUP${DEPLOYGUARD_RUN_ID:+ (deployment $DEPLOYGUARD_RUN_ID)}"
 
 # 2. Stop the running version (this target's app only, via its pid file).
 stop_app "$TARGET"

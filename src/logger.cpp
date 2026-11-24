@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -70,11 +71,21 @@ bool Logger::consoleSupportsColor() {
     return ::isatty(STDOUT_FILENO) == 1;
 }
 
-Logger::Logger(const std::string& log_file_path, ConsoleMode console)
+Logger::Logger(const std::string& log_file_path, ConsoleMode console, std::uintmax_t rotate_at_bytes)
     : console_(console), use_color_(console == ConsoleMode::Auto && consoleSupportsColor()) {
     if (log_file_path.empty()) {
         return;
     }
+
+    // Keep the log from growing forever: the current file plus one old one.
+    std::error_code ec;
+    bool rotated = false;
+    const std::uintmax_t size = std::filesystem::file_size(log_file_path, ec);
+    if (!ec && size >= rotate_at_bytes) {
+        std::filesystem::rename(log_file_path, log_file_path + ".1", ec);
+        rotated = !ec;
+    }
+
     log_file_.open(log_file_path, std::ios::app);
     if (!log_file_.is_open()) {
         if (console_ != ConsoleMode::Off) {
@@ -86,6 +97,9 @@ Logger::Logger(const std::string& log_file_path, ConsoleMode console)
     // The file is appended to across runs; mark where this run starts.
     log_file_ << "\n===== deploy-cli " << DEPLOYGUARD_VERSION << " started at " << timestamp()
               << " (pid " << ::getpid() << ") =====" << std::endl;
+    if (rotated) {
+        log_file_ << "(the previous log was moved to " << log_file_path << ".1)" << std::endl;
+    }
 }
 
 Logger::~Logger() = default;

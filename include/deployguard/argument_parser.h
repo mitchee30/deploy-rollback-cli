@@ -11,6 +11,7 @@ struct CliOptions {
     std::string target_path;                // --path
     std::optional<int> timeout_seconds;     // --timeout (overrides the config file)
     std::string log_file = "deploy_guard.log";  // --log-file ("" disables)
+    std::string report_file;                // --report (JSON summary; "" = none)
     bool dry_run = false;                   // --dry-run
     bool show_help = false;                 // --help
     bool show_version = false;              // --version

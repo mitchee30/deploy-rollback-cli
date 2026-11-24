@@ -48,6 +48,9 @@ struct Fixture {
         c.timeout_seconds = 30;
         c.health_check_attempts = 3;
         c.health_check_interval_seconds = 0;
+        c.health_check_timeout_seconds = 30;
+        c.rollback_attempts = 1;               // the retry tests opt in
+        c.rollback_retry_interval_seconds = 0;
         return c;
     }
 
@@ -356,11 +359,29 @@ TEST_CASE("DeployController: healthy on a retry -> SUCCESS; attempt number is pa
 TEST_CASE("DeployController: hooks get the target as $1 and context in DEPLOYGUARD_* variables") {
     Fixture f;
     const std::string out = f.dir / "env";
-    f.setDeploy("printf '%s|%s|%s|%s' \"$1\" \"$DEPLOYGUARD_PHASE\" \"$DEPLOYGUARD_TARGET\" "
-                "\"$DEPLOYGUARD_BACKUP_DIR\" > '" + out + "'");
+    f.setDeploy("printf '%s|%s|%s|%s|%s' \"$1\" \"$DEPLOYGUARD_PHASE\" \"$DEPLOYGUARD_TARGET\" "
+                "\"$DEPLOYGUARD_BACKUP_DIR\" \"$DEPLOYGUARD_RUN_ID\" > '" + out + "'");
     DeployController c = f.controller(f.config());
     REQUIRE(c.run() == DeploymentOutcome::SUCCESS);
-    CHECK(readFile(out) == f.target + "|deploy|" + c.paths().target + "|" + c.paths().backup_dir);
+    REQUIRE_FALSE(c.summary().run_id.empty());
+    CHECK(readFile(out) == c.paths().target + "|deploy|" + c.paths().target + "|" + c.paths().backup_dir + "|" +
+                               c.summary().run_id);
+}
+
+TEST_CASE("DeployController: $1 is the absolute target path even when the config is relative") {
+    // A relative path would point somewhere else if recovery ran from a
+    // different working directory.
+    Fixture f;
+    const std::string out = f.dir / "arg";
+    f.setDeploy("printf '%s' \"$1\" > '" + out + "'");
+    const fs::path previous = fs::current_path();
+    fs::current_path(f.dir.path());
+    Config c = f.config();
+    c.target_path = "./app/";
+    const DeploymentOutcome outcome = f.controller(c).run();
+    fs::current_path(previous);
+    CHECK(outcome == DeploymentOutcome::SUCCESS);
+    CHECK(readFile(out) == f.target);
 }
 
 TEST_CASE("DeployController: a target path full of shell metacharacters is passed literally") {
@@ -491,4 +512,201 @@ TEST_CASE("DeployController: --dry-run mentions a pending recovery") {
     CHECK(f.controller(f.config()).dryRun() == DeploymentOutcome::SUCCESS);
     CHECK(contains(f.log(), "would first run the rollback hook"));
     CHECK(f.ranHooks().empty());
+}
+
+
+// ---------------------------------------------------------------------------
+// Run id and the recorded rollback hook
+// ---------------------------------------------------------------------------
+
+TEST_CASE("DeployController: the state file records the run id and the absolute rollback hook") {
+    Fixture f;
+    const std::string seen = f.dir / "seen";
+    f.setDeploy("cat '" + f.stateFile() + "' > '" + seen + "'; echo \"$DEPLOYGUARD_RUN_ID\" >> '" + seen + "'");
+    DeployController c = f.controller(f.config());
+    REQUIRE(c.run() == DeploymentOutcome::SUCCESS);
+    const std::string content = readFile(seen);
+    CHECK(content.rfind("INSTALLING\n", 0) == 0);
+    CHECK(contains(content, "rollback=" + f.rollback + "\n"));
+    CHECK(contains(content, "run_id=" + c.summary().run_id + "\n"));
+    CHECK(contains(content, "\n" + c.summary().run_id + "\n"));  // the hook saw the same id
+}
+
+TEST_CASE("DeployController: one run id for every hook of a deployment, a new one per deployment") {
+    Fixture f;
+    const std::string ids = f.dir / "ids";
+    f.setDeploy("echo \"deploy $DEPLOYGUARD_RUN_ID\" >> '" + ids + "'");
+    f.setHealth("echo \"health $DEPLOYGUARD_RUN_ID\" >> '" + ids + "'; exit 1");
+    f.setRollback("echo \"rollback $DEPLOYGUARD_RUN_ID\" >> '" + ids + "'");
+    DeployController first = f.controller(f.config(true));
+    REQUIRE(first.run() == DeploymentOutcome::ROLLED_BACK);
+    const std::string id = first.summary().run_id;
+    CHECK(readFile(ids) == "deploy " + id + "\nhealth " + id + "\nhealth " + id + "\nhealth " + id +
+                               "\nrollback " + id + "\n");
+
+    DeployController second = f.controller(f.config());  // no health check: succeeds
+    REQUIRE(second.run() == DeploymentOutcome::SUCCESS);
+    CHECK_FALSE(second.summary().run_id.empty());
+    CHECK(second.summary().run_id != id);
+}
+
+TEST_CASE("DeployController: recovery uses the rollback hook the interrupted run recorded") {
+    // deploy.yaml was edited after the crash: today's rollback hook might not
+    // know how to undo what the interrupted run did.
+    Fixture f;
+    const std::string recorded = f.dir / "recorded_rollback.sh";
+    const std::string seen = f.dir / "seen";
+    writeScript(recorded, "echo recorded-rollback >> '" + f.events + "'; echo \"$DEPLOYGUARD_RUN_ID\" > '" + seen +
+                              "'");
+    REQUIRE(StateStore(f.stateFile()).write(DeploymentState::INSTALLING,
+                                            {{"rollback", recorded}, {"run_id", "old-run-7"}}));
+
+    DeployController c = f.controller(f.config());
+    CHECK(c.run() == DeploymentOutcome::SUCCESS);
+    CHECK(f.ranHooks() == std::string("recorded-rollback\ndeploy\n"));
+    CHECK(readFile(seen) == std::string("old-run-7\n"));
+    CHECK(c.summary().recovered_run_id == std::string("old-run-7"));
+    CHECK(contains(f.log(), "instead of the one in the current configuration"));
+}
+
+TEST_CASE("DeployController: a recorded rollback hook that no longer exists stops recovery (exit 2)") {
+    Fixture f;
+    REQUIRE(StateStore(f.stateFile()).write(DeploymentState::INSTALLING,
+                                            {{"rollback", f.dir / "deleted.sh"}, {"run_id", "old"}}));
+    CHECK(f.controller(f.config()).run() == DeploymentOutcome::CRITICAL_FAILURE);
+    CHECK(f.ranHooks().empty());  // neither today's rollback hook nor the deploy hook
+    CHECK(exists(f.stateFile()));
+    CHECK(contains(f.log(), "recorded by the interrupted run cannot be run"));
+}
+
+TEST_CASE("DeployController: a state file without a recorded hook (v0.3) uses the configured one") {
+    Fixture f;
+    writeFile(f.stateFile(), "INSTALLING\n");
+    DeployController c = f.controller(f.config());
+    CHECK(c.run() == DeploymentOutcome::SUCCESS);
+    CHECK(f.ranHooks() == std::string("rollback\ndeploy\n"));
+    CHECK(c.summary().recovered_run_id == std::string("unknown"));
+}
+
+// ---------------------------------------------------------------------------
+// Rollback retries
+// ---------------------------------------------------------------------------
+
+TEST_CASE("DeployController: a rollback that fails once is retried and succeeds") {
+    Fixture f;
+    f.setDeploy("exit 1");
+    f.setRollback("[ \"$DEPLOYGUARD_ATTEMPT\" -ge 2 ]");
+    Config c = f.config();
+    c.rollback_attempts = 3;
+    DeployController controller = f.controller(c);
+    CHECK(controller.run() == DeploymentOutcome::ROLLED_BACK);
+    CHECK(f.ranHooks() == std::string("deploy\nrollback\nrollback\n"));
+    CHECK(contains(f.log(), "Rollback attempt 1/3 failed"));
+}
+
+TEST_CASE("DeployController: a rollback that keeps failing is CRITICAL after rollback_attempts") {
+    Fixture f;
+    f.setDeploy("exit 1");
+    f.setRollback("exit 1");
+    Config c = f.config();
+    c.rollback_attempts = 3;
+    DeployController controller = f.controller(c);
+    CHECK(controller.run() == DeploymentOutcome::CRITICAL_FAILURE);
+    CHECK(f.ranHooks() == std::string("deploy\nrollback\nrollback\nrollback\n"));
+    CHECK(contains(controller.summary().reason, "3 attempt(s)"));
+}
+
+TEST_CASE("DeployController: a rollback hook that cannot start is not retried") {
+    Fixture f;
+    f.setDeploy("exit 1");
+    Config c = f.config();
+    c.rollback_attempts = 5;
+    c.rollback_script = f.dir / "missing_rollback.sh";
+    CHECK(f.controller(c).runDeployment() == DeploymentOutcome::CRITICAL_FAILURE);
+    CHECK(contains(f.log(), "Not retrying"));
+    CHECK(f.ranHooks() == std::string("deploy\n"));
+}
+
+TEST_CASE("DeployController: the retry interval is respected") {
+    Fixture f;
+    f.setDeploy("exit 1");
+    f.setRollback("[ \"$DEPLOYGUARD_ATTEMPT\" -ge 2 ]");
+    Config c = f.config();
+    c.rollback_attempts = 2;
+    c.rollback_retry_interval_seconds = 1;
+    const auto start = std::chrono::steady_clock::now();
+    CHECK(f.controller(c).run() == DeploymentOutcome::ROLLED_BACK);
+    CHECK(std::chrono::steady_clock::now() - start >= std::chrono::milliseconds(900));
+}
+
+// ---------------------------------------------------------------------------
+// Timeouts per phase
+// ---------------------------------------------------------------------------
+
+TEST_CASE("DeployController: the health check has its own, shorter timeout") {
+    Fixture f;
+    f.setHealth("sleep 30");
+    Config c = f.config(true);
+    c.timeout_seconds = 600;               // deploy/rollback limit: long
+    c.health_check_timeout_seconds = 1;    // health check limit: short
+    c.health_check_attempts = 2;
+    const auto start = std::chrono::steady_clock::now();
+    CHECK(f.controller(c).run() == DeploymentOutcome::ROLLED_BACK);
+    CHECK(std::chrono::steady_clock::now() - start < seconds(15));
+    CHECK(f.ranHooks() == std::string("deploy\nhealth\nhealth\nrollback\n"));
+}
+
+TEST_CASE("DeployController: kill_grace_seconds controls the SIGTERM -> SIGKILL delay") {
+    Fixture f;
+    f.setDeploy("trap '' TERM; sleep 30");
+    Config c = f.config();
+    c.timeout_seconds = 1;
+    c.kill_grace_seconds = 0;
+    const auto start = std::chrono::steady_clock::now();
+    CHECK(f.controller(c).run() == DeploymentOutcome::ROLLED_BACK);
+    CHECK(std::chrono::steady_clock::now() - start < seconds(4));  // default grace alone is 5s
+    CHECK(contains(f.log(), "SIGKILL"));
+}
+
+// ---------------------------------------------------------------------------
+// The run summary (--report)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("DeployController: the summary records the outcome, reason and every hook run") {
+    Fixture f;
+    f.setHealth("exit 1");
+    Config c = f.config(true);
+    c.health_check_attempts = 2;
+    DeployController controller = f.controller(c);
+    REQUIRE(controller.run() == DeploymentOutcome::ROLLED_BACK);
+
+    const RunSummary& s = controller.summary();
+    CHECK(s.outcome == std::string("ROLLED_BACK"));
+    CHECK(s.exit_code == 1);
+    CHECK(s.target == controller.paths().target);
+    CHECK(s.reason == std::string("the health check failed"));
+    CHECK_FALSE(s.started_at.empty());
+    REQUIRE(s.steps.size() == 4);
+    CHECK(s.steps[0].phase == std::string("deploy"));
+    CHECK(s.steps[1].phase == std::string("health_check"));
+    CHECK(s.steps[1].attempt == 1);
+    CHECK(s.steps[2].attempt == 2);
+    CHECK(s.steps[2].exit_code == 1);
+    CHECK(s.steps[3].phase == std::string("rollback"));
+    CHECK(s.steps[3].result == std::string("exited with status 0"));
+}
+
+TEST_CASE("DeployController: a successful run has no reason; an aborted one says why") {
+    Fixture f;
+    DeployController ok = f.controller(f.config());
+    REQUIRE(ok.run() == DeploymentOutcome::SUCCESS);
+    CHECK(ok.summary().reason.empty());
+    CHECK(ok.summary().exit_code == 0);
+
+    Config c = f.config();
+    c.rollback_script = f.dir / "missing.sh";
+    DeployController aborted = f.controller(c);
+    REQUIRE(aborted.run() == DeploymentOutcome::ABORTED);
+    CHECK(contains(aborted.summary().reason, "pre-flight check failed"));
+    CHECK(aborted.summary().steps.empty());
 }

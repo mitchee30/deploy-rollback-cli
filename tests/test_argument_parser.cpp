@@ -144,3 +144,13 @@ TEST_CASE("ArgumentParser: --log-file without a value is an error") {
     CHECK_FALSE(r.ok());
     CHECK(r.error.find("--log-file") != std::string::npos);
 }
+
+
+TEST_CASE("ArgumentParser: --report") {
+    const auto r = parse({"--path", "x", "--report", "result.json"});
+    REQUIRE(r.ok());
+    CHECK(r.options.report_file == std::string("result.json"));
+    CHECK(parse({"--path", "x"}).options.report_file.empty());
+    CHECK_FALSE(parse({"--path", "x", "--report"}).ok());
+    CHECK_FALSE(parse({"--path", "x", "--report="}).ok());
+}

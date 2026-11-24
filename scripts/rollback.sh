@@ -4,10 +4,10 @@
 #
 #   usage: rollback.sh <target_dir>
 #
-# deploy-cli runs this after a failed deployment, and again on its next start
-# if it was killed in the middle of a deployment or of a rollback. So this
-# script must work no matter how far deploy.sh got, and must be safe to run
-# more than once.
+# deploy-cli runs this after a failed deployment, retries it if it fails,
+# and runs it again on its next start if it was killed in the middle of a
+# deployment or of a rollback. So this script must work no matter how far
+# deploy.sh got, and must be safe to run more than once.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,9 +17,21 @@ source "$SCRIPT_DIR/lib/common.sh"
 TARGET="${1:?usage: rollback.sh <target_dir>}"
 TARGET="${TARGET%/}"
 BACKUP="$(backup_dir_for "$TARGET")"
-log "rolling back $TARGET"
+log "rolling back $TARGET${DEPLOYGUARD_RUN_ID:+ (deployment $DEPLOYGUARD_RUN_ID)}, attempt ${DEPLOYGUARD_ATTEMPT:-1}"
 
+USE_BACKUP=no
 if [ -d "$BACKUP" ]; then
+    if backup_matches_run "$BACKUP"; then
+        USE_BACKUP=yes
+    else
+        # Not ours: restoring it would roll the target back to some other
+        # deployment's starting point. deploy.sh only modifies the target
+        # after committing *its own* backup, so this deployment never did.
+        warn "$BACKUP belongs to deployment '$(cat "$BACKUP.run_id")', not to this one; leaving it alone"
+    fi
+fi
+
+if [ "$USE_BACKUP" = yes ]; then
     # deploy.sh committed a backup, so it may have changed the target.
     stop_app "$TARGET"
     mkdir -p "$TARGET"
@@ -31,22 +43,28 @@ else
     log "no backup from this deployment: the target was not modified"
 fi
 
+drop_backup() {
+    if [ "$USE_BACKUP" = yes ]; then
+        rm -rf "$BACKUP" "$BACKUP.run_id"
+    fi
+}
+
 if [ ! -x "$TARGET/app.sh" ]; then
     # The target was empty before this deployment: nothing to run.
     stop_app "$TARGET"
-    rm -rf "$BACKUP"
+    drop_backup
     log "rollback complete: the target holds no app, as before the deployment"
     exit 0
 fi
 
 # Make sure the restored version is running and healthy before deleting the
-# backup: if anything below fails, deploy-cli reports it and re-runs this
-# hook next time, and it will need the backup again.
+# backup: if anything below fails, deploy-cli retries this hook (and runs it
+# again on its next start), and it will need the backup again.
 if ! app_is_running "$TARGET"; then
     start_app "$TARGET"
 fi
 wait_until_healthy "$TARGET" 10 ||
     die "the restored app is not healthy; the backup is kept at $BACKUP for manual recovery"
 
-rm -rf "$BACKUP"
+drop_backup
 log "rollback complete: version $("$TARGET/app.sh" --version) is running and healthy"

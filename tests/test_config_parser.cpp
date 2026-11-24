@@ -170,3 +170,40 @@ TEST_CASE("ConfigParser::validate requires a deploy script") {
     c.rollback_script = "./r.sh";
     CHECK(contains(ConfigParser::validate(c), "deploy script"));
 }
+
+
+TEST_CASE("ConfigParser: timeout, retry and grace keys (v0.4)") {
+    ConfigFixture f;
+    const auto defaults = f.parse(kMinimal);
+    REQUIRE(defaults.has_value());
+    CHECK(defaults->health_check_timeout_seconds == 30);
+    CHECK(defaults->rollback_attempts == 3);
+    CHECK(defaults->rollback_retry_interval_seconds == 5);
+    CHECK(defaults->kill_grace_seconds == 5);
+
+    const auto config = f.parse(std::string(kMinimal) +
+                                "  health_check_timeout_seconds: 7\n"
+                                "  rollback_attempts: 4\n"
+                                "  rollback_retry_interval_seconds: 0\n"
+                                "  kill_grace_seconds: 1\n");
+    REQUIRE(config.has_value());
+    CHECK(config->health_check_timeout_seconds == 7);
+    CHECK(config->rollback_attempts == 4);
+    CHECK(config->rollback_retry_interval_seconds == 0);
+    CHECK(config->kill_grace_seconds == 1);
+}
+
+TEST_CASE("ConfigParser: out-of-range values name the key and the allowed range") {
+    ConfigFixture f;
+    CHECK_FALSE(f.parse(std::string(kMinimal) + "  rollback_attempts: 0\n"));
+    CHECK(contains(f.log(), "rollback_attempts must be between 1 and 20 (got 0)"));
+    CHECK_FALSE(f.parse(std::string(kMinimal) + "  kill_grace_seconds: -1\n"));
+    CHECK(contains(f.log(), "kill_grace_seconds"));
+}
+
+TEST_CASE("ConfigParser: parseYaml reports the reason to the caller") {
+    ConfigFixture f;
+    std::string error;
+    CHECK_FALSE(ConfigParser::parseYaml(f.dir / "missing.yaml", f.logger, &error));
+    CHECK(contains(error, "Cannot read configuration file"));
+}

@@ -46,6 +46,20 @@ expect_missing "$BACKUP"
 expect_missing "$STATE"
 pass
 
+section "rollback.sh leaves alone a backup that belongs to another deployment"
+# As if a crash had left the state of deployment "mine" (killed before it
+# committed its own backup) next to a backup tagged with another run id.
+mkdir -p "$BACKUP"
+cp -a releases/v1.0/. "$BACKUP/"
+echo "someone-else" >"$BACKUP.run_id"
+printf 'INSTALLING\nrun_id=mine\nrollback=%s\n' "$WORK/scripts/rollback.sh" >"$STATE"
+DEMO_RELEASE=v1.1 run_cli --config deploy.yaml --log-file "$LOG"
+expect_exit 0
+expect_file_has "$LOG" "belongs to deployment 'someone-else'"
+[ "$(version)" = "1.1" ] || fail "the other deployment's backup (v1.0) was restored"
+expect_missing "$STATE"
+pass
+
 section "--path uses the bundled hooks, health check included"
 DEMO_RELEASE=v2.0 run_cli --path ./test_app_target --log-file ""
 expect_exit 1

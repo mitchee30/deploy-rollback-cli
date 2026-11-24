@@ -1,6 +1,7 @@
 #ifndef DEPLOYGUARD_STATE_STORE_H
 #define DEPLOYGUARD_STATE_STORE_H
 
+#include <map>
 #include <string>
 
 namespace DeployGuard {
@@ -36,10 +37,19 @@ struct TargetPaths {
 
 TargetPaths deriveTargetPaths(const std::string& target_path);
 
+// key=value lines stored after the state, e.g. which run wrote the file and
+// which rollback hook that run was using.
+using StateFields = std::map<std::string, std::string>;
+
 struct StateSnapshot {
     DeploymentState state = DeploymentState::STABLE;
     bool valid = true;    // false: the file exists but is unreadable or unrecognised
-    std::string detail;   // extra lines from the file (pid, timestamp) or the error
+    std::string detail;   // every extra line, for log messages (or the error)
+    StateFields fields;   // the key=value lines
+
+    // The value of a field, or "" if the file does not have it (files
+    // written by v0.3 and earlier only contain the state).
+    std::string field(const std::string& key) const;
 };
 
 // ------------------------------------------------------------------------
@@ -64,8 +74,10 @@ public:
 
     const std::string& path() const { return path_; }
 
+    // Records `state` plus `fields` (and the writer's pid and a timestamp).
+    // Keys must be lowercase identifiers and values must fit on one line.
     // Returns false and fills *error on failure.
-    bool write(DeploymentState state, std::string* error = nullptr);
+    bool write(DeploymentState state, const StateFields& fields = {}, std::string* error = nullptr);
     StateSnapshot read() const;
     bool clear(std::string* error = nullptr);
 

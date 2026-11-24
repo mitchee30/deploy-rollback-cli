@@ -29,6 +29,19 @@ backup_dir_for() {
     fi
 }
 
+# Does this backup belong to the deployment being rolled back? deploy.sh
+# tags each backup with $DEPLOYGUARD_RUN_ID in "<backup>.run_id" (next to
+# the backup, so restoring it never copies the tag into the target). With no
+# id on either side - deploy.sh run by hand, or a state file written by
+# deploy-cli < 0.4 - the backup is trusted.
+backup_matches_run() {
+    local backup="$1" tagged
+    [ -n "${DEPLOYGUARD_RUN_ID:-}" ] || return 0
+    [ -f "$backup.run_id" ] || return 0
+    tagged="$(cat "$backup.run_id")"
+    [ -z "$tagged" ] || [ "$tagged" = "$DEPLOYGUARD_RUN_ID" ]
+}
+
 pid_file_for() { _parent_and_name "$1"; echo "$_PARENT/.demo_app_${_NAME}.pid"; }
 app_log_for()  { _parent_and_name "$1"; echo "$_PARENT/.demo_app_${_NAME}.log"; }
 

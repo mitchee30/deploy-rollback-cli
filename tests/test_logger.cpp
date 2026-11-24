@@ -178,3 +178,29 @@ TEST_CASE("Logger: a partial stderr line is flushed at the end") {
     }
     CHECK(contains(readFile(dir / "run.log"), "[STDERR]  [s] dying words without newline\n"));
 }
+
+
+TEST_CASE("Logger: a log file past the size limit is rotated to .1") {
+    TempDir dir;
+    const std::string path = dir / "run.log";
+    writeFile(path, std::string(2000, 'x') + "\nOLD RUN\n");
+    writeFile(path + ".1", "even older\n");
+    {
+        Logger logger(path, ConsoleMode::Off, /*rotate_at_bytes=*/1000);
+        logger.log(LogLevel::INFO, "new run");
+    }
+    CHECK(contains(readFile(path + ".1"), "OLD RUN"));  // replaced the even older one
+    CHECK_FALSE(contains(readFile(path + ".1"), "even older"));
+    CHECK_FALSE(contains(readFile(path), "OLD RUN"));
+    CHECK(contains(readFile(path), "new run"));
+    CHECK(contains(readFile(path), "moved to"));
+}
+
+TEST_CASE("Logger: a log file under the limit is appended to, not rotated") {
+    TempDir dir;
+    const std::string path = dir / "run.log";
+    writeFile(path, "OLD RUN\n");
+    { Logger(path, ConsoleMode::Off, 1000).log(LogLevel::INFO, "new run"); }
+    CHECK(contains(readFile(path), "OLD RUN"));
+    CHECK_FALSE(exists(path + ".1"));
+}

@@ -18,7 +18,8 @@ stop_app "$TARGET"
 # Start from a clean slate: no leftover backup or crash-recovery state.
 # (The lock file is left alone; deleting a lock file is never safe.)
 _parent_and_name "$TARGET"
-rm -rf "$_PARENT/.deploy_guard_${_NAME}.backup" "$_PARENT/.deploy_guard_${_NAME}.backup.tmp"
+rm -rf "$_PARENT/.deploy_guard_${_NAME}.backup" "$_PARENT/.deploy_guard_${_NAME}.backup.tmp" \
+    "$_PARENT/.deploy_guard_${_NAME}.backup.run_id"
 rm -f "$_PARENT/.deploy_guard_${_NAME}.state" "$_PARENT/.deploy_guard_${_NAME}.state.tmp"
 
 clear_dir "$TARGET"

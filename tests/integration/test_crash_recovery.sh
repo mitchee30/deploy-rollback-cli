@@ -30,10 +30,12 @@ exit 1"
 write_hook "$WORK/rollback.sh" "
 echo rollback >> '$EVENTS'
 if [ -f '$SAVED' ]; then cp '$SAVED' \"\$1/version\"; rm -f '$SAVED'; fi"
+# Dies the first time it runs (a power cut halfway through the rollback);
+# when it is run again it does the real work.
 write_hook "$WORK/rollback_then_die.sh" "
 echo rollback >> '$EVENTS'
-kill -9 \$PPID
-exit 0"
+if [ ! -f '$WORK/died_once' ]; then touch '$WORK/died_once'; kill -9 \$PPID; exit 0; fi
+if [ -f '$SAVED' ]; then cp '$SAVED' \"\$1/version\"; rm -f '$SAVED'; fi"
 
 section "deploy-cli killed with SIGKILL mid-deployment leaves INSTALLING behind"
 write_config "$WORK/crash.yaml" "$T" "$WORK/deploy_then_die.sh" "$WORK/rollback.sh"
@@ -63,11 +65,15 @@ expect_first_line "$STATE" "ROLLING_BACK"
 [ "$(cat "$T/version")" = "broken" ] || fail "expected the broken version to be in place"
 pass
 
-section "next run resumes the rollback, restoring the last good version, then deploys"
+section "next run resumes the rollback with the hook the dead run recorded, then deploys"
+# good.yaml names rollback.sh, but the state file says the interrupted run
+# was using rollback_then_die.sh - and that is the hook that knows how to
+# undo it.
 reset_events
 run_cli --config "$WORK/good.yaml" --log-file "$LOG"
 expect_exit 0
 expect_output "interrupted rollback"
+expect_output "rollback_then_die.sh; using it instead of the one in the current configuration"
 expect_events "rollback deploy"
 [ "$(cat "$T/version")" = "v2" ] || fail "expected v2, found $(cat "$T/version")"
 expect_missing "$STATE"
