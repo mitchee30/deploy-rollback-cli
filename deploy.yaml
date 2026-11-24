@@ -9,7 +9,11 @@ deployment:
     rollback: "./scripts/rollback.sh"
     health_check: "./scripts/health_check.sh"  # optional
 
-  # Optional; defaults in brackets.
-  timeout_seconds: 60                 # time limit per hook run, 0 = none [600]
-  health_check_attempts: 3            # [3]
-  health_check_interval_seconds: 1    # pause between failed attempts [2]
+  # Everything below is optional; defaults in brackets.
+  timeout_seconds: 60                 # limit per deploy/rollback run, 0 = none    [600]
+  health_check_timeout_seconds: 10    # limit per health check attempt, 0 = none  [30]
+  health_check_attempts: 3            #                                           [3]
+  health_check_interval_seconds: 1    # pause between failed health checks       [2]
+  rollback_attempts: 3                # a failed rollback is retried              [3]
+  rollback_retry_interval_seconds: 2  #                                           [5]
+  kill_grace_seconds: 5               # SIGTERM -> SIGKILL delay on timeout/Ctrl+C [5]

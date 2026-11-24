@@ -47,10 +47,33 @@ pass
 
 section "a hung rollback times out too: exit 2, state kept for the next run"
 reset_events
-write_config "$WORK/rbhang.yaml" "$T" "$WORK/deploy_fail.sh" "$WORK/rollback_hang.sh" "timeout_seconds: 1"
+write_config "$WORK/rbhang.yaml" "$T" "$WORK/deploy_fail.sh" "$WORK/rollback_hang.sh" "timeout_seconds: 1" \
+    "rollback_attempts: 1"
 run_cli --config "$WORK/rbhang.yaml" --log-file "$LOG"
 expect_exit 2
 expect_faster_than 10
 expect_first_line "$STATE" "ROLLING_BACK"
 rm -f "$STATE"
+pass
+
+section "the health check has its own timeout: a hung check costs seconds, not timeout_seconds"
+reset_events
+write_hook "$WORK/deploy_ok.sh" "echo deploy >> '$EVENTS'"
+write_hook "$WORK/health_hang.sh" "echo health >> '$EVENTS'; sleep 60"
+cat >"$WORK/health.yaml" <<EOF
+deployment:
+  target_path: "$T"
+  scripts:
+    deploy: "$WORK/deploy_ok.sh"
+    rollback: "$WORK/rollback.sh"
+    health_check: "$WORK/health_hang.sh"
+  timeout_seconds: 600
+  health_check_timeout_seconds: 1
+  health_check_attempts: 2
+  health_check_interval_seconds: 0
+EOF
+run_cli --config "$WORK/health.yaml" --log-file "$LOG"
+expect_exit 1
+expect_faster_than 15
+expect_events "deploy health health rollback"
 pass

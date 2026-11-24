@@ -98,6 +98,12 @@ CliParseResult ArgumentParser::parse(int argc, const char* const argv[]) {
                 return fail("option '--log-file' requires a file name (use \"\" to disable the log file)");
             }
             opts.log_file = *value;
+        } else if (name == "--report") {
+            const auto value = takeValue();
+            if (!value || value->empty()) {
+                return fail("option '--report' requires a file name");
+            }
+            opts.report_file = *value;
         } else if (!arg.empty() && arg[0] == '-') {
             return fail("unknown option '" + std::string(arg) + "'");
         } else {
@@ -130,10 +136,12 @@ std::string ArgumentParser::usage(const std::string& program_name) {
            "  -c, --config <file>      YAML configuration (see deploy.yaml)\n"
            "  -p, --path <dir>         Target directory, using the bundled hooks\n"
            "                           ./scripts/{deploy,rollback,health_check}.sh\n"
-           "  -t, --timeout <seconds>  Time limit for each hook run; overrides the config\n"
-           "                           file (default 600, 0 = no limit)\n"
+           "  -t, --timeout <seconds>  Time limit for each deploy/rollback hook run;\n"
+           "                           overrides the config file (default 600, 0 = none)\n"
            "      --log-file <file>    Append a timestamped log here (default\n"
            "                           deploy_guard.log; \"\" disables it)\n"
+           "      --report <file>      Write a JSON summary of the run (outcome, reason,\n"
+           "                           every hook run with its duration) for CI\n"
            "  -n, --dry-run            Validate everything and print the plan, but run no\n"
            "                           hook and change nothing\n"
            "  -h, --help               Show this help\n"

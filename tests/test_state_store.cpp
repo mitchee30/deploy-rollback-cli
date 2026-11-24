@@ -38,14 +38,14 @@ TEST_CASE("StateStore: write then read round-trips, with diagnostic details") {
     StateStore store(dir / "state");
 
     std::string error;
-    REQUIRE(store.write(DeploymentState::INSTALLING, &error));
+    REQUIRE(store.write(DeploymentState::INSTALLING, {}, &error));
     StateSnapshot s = store.read();
     CHECK(s.valid);
     CHECK(s.state == DeploymentState::INSTALLING);
     CHECK(contains(s.detail, "pid=" + std::to_string(::getpid())));
     CHECK(contains(s.detail, "updated_at="));
 
-    REQUIRE(store.write(DeploymentState::ROLLING_BACK, &error));
+    REQUIRE(store.write(DeploymentState::ROLLING_BACK, {}, &error));
     s = store.read();
     CHECK(s.state == DeploymentState::ROLLING_BACK);
     // Replaced, not appended to.
@@ -111,7 +111,7 @@ TEST_CASE("StateStore: write() reports failure instead of pretending it worked")
     TempDir dir;
     StateStore store(dir / "missing_dir/state");
     std::string error;
-    CHECK_FALSE(store.write(DeploymentState::INSTALLING, &error));
+    CHECK_FALSE(store.write(DeploymentState::INSTALLING, {}, &error));
     CHECK(contains(error, "missing_dir"));
 }
 
@@ -149,4 +149,34 @@ TEST_CASE("StateStore: blank lines in the details are ignored") {
 TEST_CASE("deriveTargetPaths: the root directory gets a usable name") {
     const TargetPaths p = deriveTargetPaths("/");
     CHECK(p.state_file == std::string("/.deploy_guard_root.state"));
+}
+
+
+TEST_CASE("StateStore: key=value fields round-trip") {
+    TempDir dir;
+    StateStore store(dir / "state");
+    REQUIRE(store.write(DeploymentState::INSTALLING, {{"run_id", "abc-1"}, {"rollback", "/srv/hooks/rollback.sh"}}));
+    const StateSnapshot s = store.read();
+    CHECK(s.valid);
+    CHECK(s.field("run_id") == std::string("abc-1"));
+    CHECK(s.field("rollback") == std::string("/srv/hooks/rollback.sh"));
+    CHECK(s.field("pid") == std::to_string(::getpid()));
+    CHECK(s.field("missing").empty());
+}
+
+TEST_CASE("StateStore: a value with '=' in it is kept whole") {
+    TempDir dir;
+    StateStore store(dir / "state");
+    REQUIRE(store.write(DeploymentState::ROLLING_BACK, {{"rollback", "/opt/a=b/rollback.sh"}}));
+    CHECK(store.read().field("rollback") == std::string("/opt/a=b/rollback.sh"));
+}
+
+TEST_CASE("StateStore: fields that would break the line format are rejected") {
+    TempDir dir;
+    StateStore store(dir / "state");
+    std::string error;
+    CHECK_FALSE(store.write(DeploymentState::INSTALLING, {{"rollback", "two\nlines"}}, &error));
+    CHECK(contains(error, "one line"));
+    CHECK_FALSE(store.write(DeploymentState::INSTALLING, {{"Bad Key", "x"}}, &error));
+    CHECK_FALSE(exists(dir / "state"));
 }

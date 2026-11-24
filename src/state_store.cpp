@@ -118,17 +118,28 @@ std::string trim(const std::string& s) {
 
 StateStore::StateStore(std::string state_file_path) : path_(std::move(state_file_path)) {}
 
-bool StateStore::write(DeploymentState state, std::string* error) {
+std::string StateSnapshot::field(const std::string& key) const {
+    const auto it = fields.find(key);
+    return it == fields.end() ? std::string() : it->second;
+}
+
+bool StateStore::write(DeploymentState state, const StateFields& fields, std::string* error) {
     if (state == DeploymentState::STABLE) {
         return clear(error);
     }
 
-    // First line: the state (this is all read() needs). The rest is for
-    // humans inspecting a leftover file.
+    // First line: the state. Then key=value lines: what the next run needs to
+    // finish an interrupted rollback, plus details for humans.
     std::ostringstream content;
-    content << stateName(state) << '\n'
-            << "pid=" << ::getpid() << '\n'
-            << "updated_at=" << isoTimestamp() << '\n';
+    content << stateName(state) << '\n';
+    for (const auto& [key, value] : fields) {
+        const bool key_ok = !key.empty() && key.find_first_not_of("abcdefghijklmnopqrstuvwxyz_") == std::string::npos;
+        if (!key_ok || value.find_first_of("\r\n") != std::string::npos) {
+            return fail(error, "cannot record state field '" + key + "': it must be one line");
+        }
+        content << key << '=' << value << '\n';
+    }
+    content << "pid=" << ::getpid() << '\n' << "updated_at=" << isoTimestamp() << '\n';
 
     const std::string tmp = path_ + ".tmp";
     {
@@ -208,6 +219,10 @@ StateSnapshot StateStore::read() const {
             snapshot.detail += ", ";
         }
         snapshot.detail += line;
+        const auto eq = line.find('=');
+        if (eq != std::string::npos && eq > 0) {
+            snapshot.fields[line.substr(0, eq)] = line.substr(eq + 1);
+        }
     }
     return snapshot;
 }

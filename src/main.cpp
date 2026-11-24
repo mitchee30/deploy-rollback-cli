@@ -3,6 +3,7 @@
 #include "deployguard/deploy_controller.h"
 #include "deployguard/logger.h"
 #include "deployguard/process_manager.h"
+#include "deployguard/report.h"
 #include "deployguard/signals.h"
 
 #include <cerrno>
@@ -65,11 +66,34 @@ int main(int argc, char* argv[]) {
     installSignalHandlers();
     auto logger = std::make_shared<Logger>(options.log_file);
 
+    // --report: written for every outcome from here on, including "invalid
+    // configuration", so CI always finds a result file. A failure to write
+    // it is logged but does not change the exit code: the deployment's
+    // outcome is what matters.
+    auto finishWith = [&](const RunSummary& summary) {
+        if (!options.report_file.empty()) {
+            std::string error;
+            if (writeReport(options.report_file, summary, &error)) {
+                logger->log(LogLevel::INFO, "Wrote report to " + options.report_file);
+            } else {
+                logger->log(LogLevel::ERROR, "Could not write the report: " + error);
+            }
+        }
+        return summary.exit_code;
+    };
+    auto abortedBeforeStart = [&](const std::string& reason) {
+        RunSummary summary;
+        summary.reason = reason;
+        summary.started_at = utcTimestamp();
+        return finishWith(summary);
+    };
+
     Config config;
     if (!options.config_file.empty()) {
-        std::optional<Config> loaded = ConfigParser::parseYaml(options.config_file, logger);
+        std::string error;
+        std::optional<Config> loaded = ConfigParser::parseYaml(options.config_file, logger, &error);
         if (!loaded) {
-            return toExitCode(DeploymentOutcome::ABORTED);  // reason already logged
+            return abortedBeforeStart(error);  // already logged
         }
         config = *loaded;
     } else {
@@ -84,7 +108,7 @@ int main(int argc, char* argv[]) {
     }
     if (const std::string problem = ConfigParser::validate(config); !problem.empty()) {
         logger->log(LogLevel::ERROR, "Invalid configuration: " + problem);
-        return toExitCode(DeploymentOutcome::ABORTED);
+        return abortedBeforeStart("invalid configuration: " + problem);
     }
 
     // Polled by the deployment loop. Logs which signal arrived, once.
@@ -103,6 +127,10 @@ int main(int argc, char* argv[]) {
 
     auto proc_mgr = std::make_shared<ProcessManager>(logger);
     DeployController controller(logger, proc_mgr, config, cancel_requested);
-    const DeploymentOutcome outcome = options.dry_run ? controller.dryRun() : controller.run();
-    return toExitCode(outcome);
+    if (options.dry_run) {
+        controller.dryRun();
+    } else {
+        controller.run();
+    }
+    return finishWith(controller.summary());
 }

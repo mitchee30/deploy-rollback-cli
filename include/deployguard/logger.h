@@ -1,6 +1,7 @@
 #ifndef DEPLOYGUARD_LOGGER_H
 #define DEPLOYGUARD_LOGGER_H
 
+#include <cstdint>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -36,8 +37,13 @@ enum class ConsoleMode {
 // ------------------------------------------------------------------------
 class Logger {
 public:
+    // Log files are appended to across runs. One that has grown past this
+    // size is renamed to "<file>.1" (replacing the previous one) first.
+    static constexpr std::uintmax_t kDefaultRotateBytes = std::uintmax_t{10} * 1024 * 1024;
+
     // An empty `log_file_path` disables file logging.
-    explicit Logger(const std::string& log_file_path, ConsoleMode console = ConsoleMode::Auto);
+    explicit Logger(const std::string& log_file_path, ConsoleMode console = ConsoleMode::Auto,
+                    std::uintmax_t rotate_at_bytes = kDefaultRotateBytes);
     ~Logger();
 
     Logger(const Logger&) = delete;

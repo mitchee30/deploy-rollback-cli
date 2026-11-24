@@ -16,7 +16,33 @@ struct ConfigError : std::runtime_error {
 };
 
 const std::set<std::string> kDeploymentKeys = {
-    "target_path", "scripts", "timeout_seconds", "health_check_attempts", "health_check_interval_seconds",
+    "target_path",
+    "scripts",
+    "timeout_seconds",
+    "health_check_timeout_seconds",
+    "health_check_attempts",
+    "health_check_interval_seconds",
+    "rollback_attempts",
+    "rollback_retry_interval_seconds",
+    "kill_grace_seconds",
+};
+
+// Each optional integer key, the Config member it sets, and its valid range.
+struct IntKey {
+    const char* name;
+    int Config::*member;
+    int min;
+    int max;
+};
+constexpr int kWeek = 7 * 24 * 3600;
+const IntKey kIntKeys[] = {
+    {"timeout_seconds", &Config::timeout_seconds, 0, kWeek},
+    {"health_check_timeout_seconds", &Config::health_check_timeout_seconds, 0, kWeek},
+    {"health_check_attempts", &Config::health_check_attempts, 1, 100},
+    {"health_check_interval_seconds", &Config::health_check_interval_seconds, 0, 3600},
+    {"rollback_attempts", &Config::rollback_attempts, 1, 20},
+    {"rollback_retry_interval_seconds", &Config::rollback_retry_interval_seconds, 0, 3600},
+    {"kill_grace_seconds", &Config::kill_grace_seconds, 0, 600},
 };
 const std::set<std::string> kScriptKeys = {"deploy", "rollback", "health_check"};
 
@@ -71,7 +97,9 @@ void warnAboutUnknownKeys(const YAML::Node& map, const std::set<std::string>& kn
 
 } // namespace
 
-std::optional<Config> ConfigParser::parseYaml(const std::string& filepath, const std::shared_ptr<Logger>& logger) {
+std::optional<Config> ConfigParser::parseYaml(const std::string& filepath, const std::shared_ptr<Logger>& logger,
+                                              std::string* error) {
+    std::string problem;
     try {
         const YAML::Node root = YAML::LoadFile(filepath);
         if (!root.IsMap() || !root["deployment"]) {
@@ -95,28 +123,28 @@ std::optional<Config> ConfigParser::parseYaml(const std::string& filepath, const
         config.rollback_script = requiredString(scripts, "rollback", "deployment.scripts.");
         config.health_check_script = optionalString(scripts, "health_check", "deployment.scripts.").value_or("");
 
-        if (auto v = optionalInt(deployment, "timeout_seconds", "deployment.")) {
-            config.timeout_seconds = *v;
-        }
-        if (auto v = optionalInt(deployment, "health_check_attempts", "deployment.")) {
-            config.health_check_attempts = *v;
-        }
-        if (auto v = optionalInt(deployment, "health_check_interval_seconds", "deployment.")) {
-            config.health_check_interval_seconds = *v;
+        for (const IntKey& key : kIntKeys) {
+            if (auto value = optionalInt(deployment, key.name, "deployment.")) {
+                config.*key.member = *value;
+            }
         }
 
-        if (const std::string problem = validate(config); !problem.empty()) {
-            throw ConfigError(problem);
+        if (const std::string invalid = validate(config); !invalid.empty()) {
+            throw ConfigError(invalid);
         }
 
         logger->log(LogLevel::INFO, "Loaded configuration from " + filepath);
         return config;
     } catch (const ConfigError& e) {
-        logger->log(LogLevel::ERROR, "Invalid configuration in " + filepath + ": " + e.what());
+        problem = "Invalid configuration in " + filepath + ": " + e.what();
     } catch (const YAML::BadFile&) {
-        logger->log(LogLevel::ERROR, "Cannot read configuration file " + filepath);
+        problem = "Cannot read configuration file " + filepath;
     } catch (const YAML::Exception& e) {
-        logger->log(LogLevel::ERROR, "Cannot parse " + filepath + ": " + e.what());
+        problem = "Cannot parse " + filepath + ": " + e.what();
+    }
+    logger->log(LogLevel::ERROR, problem);
+    if (error != nullptr) {
+        *error = problem;
     }
     return std::nullopt;
 }
@@ -131,15 +159,12 @@ std::string ConfigParser::validate(const Config& config) {
     if (config.rollback_script.empty()) {
         return "a rollback script is required";
     }
-    constexpr int kMaxTimeoutSeconds = 7 * 24 * 3600;
-    if (config.timeout_seconds < 0 || config.timeout_seconds > kMaxTimeoutSeconds) {
-        return "timeout_seconds must be between 0 (no limit) and " + std::to_string(kMaxTimeoutSeconds);
-    }
-    if (config.health_check_attempts < 1 || config.health_check_attempts > 100) {
-        return "health_check_attempts must be between 1 and 100";
-    }
-    if (config.health_check_interval_seconds < 0 || config.health_check_interval_seconds > 3600) {
-        return "health_check_interval_seconds must be between 0 and 3600";
+    for (const IntKey& key : kIntKeys) {
+        const int value = config.*key.member;
+        if (value < key.min || value > key.max) {
+            return std::string(key.name) + " must be between " + std::to_string(key.min) + " and " +
+                   std::to_string(key.max) + " (got " + std::to_string(value) + ")";
+        }
     }
     return "";
 }

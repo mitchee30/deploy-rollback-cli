@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(deploy-rollback-cli VERSION 0.3.1 LANGUAGES CXX)
+project(deploy-rollback-cli VERSION 0.4.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,11 +37,12 @@ set(YAML_CPP_FORMAT_SOURCE OFF CACHE BOOL "" FORCE)
 
 # 0.9.0 is required: 0.8.0 does not #include <cstdint> and fails to compile on
 # newer GCC releases (this is what broke CI on ubuntu-latest).
+# Dependencies are pinned to commits, not tags: a tag can be moved, a commit
+# hash cannot, so every build compiles exactly the same third-party code.
 FetchContent_Declare(
     yaml-cpp
     GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
-    GIT_TAG        yaml-cpp-0.9.0
-    GIT_SHALLOW    TRUE
+    GIT_TAG        56e3bb550c91fd7005566f19c079cb7a503223cf  # yaml-cpp-0.9.0
 )
 FetchContent_MakeAvailable(yaml-cpp)
 
@@ -61,8 +62,7 @@ if(DEPLOYGUARD_BUILD_TESTS)
     FetchContent_Declare(
         doctest
         GIT_REPOSITORY https://github.com/doctest/doctest.git
-        GIT_TAG        v2.5.3
-        GIT_SHALLOW    TRUE
+        GIT_TAG        2d0a9359a60c51affe2a9bebb1be1dca47868151  # v2.5.3
     )
     FetchContent_MakeAvailable(doctest)
     deployguard_mark_headers_as_system(doctest)
@@ -95,6 +95,7 @@ add_library(deployguard_core STATIC
     src/file_lock.cpp
     src/logger.cpp
     src/process_manager.cpp
+    src/report.cpp
     src/signals.cpp
     src/state_store.cpp
 )
@@ -106,6 +107,10 @@ deployguard_set_warnings(deployguard_core)
 add_executable(deploy-cli src/main.cpp)
 target_link_libraries(deploy-cli PRIVATE deployguard_core)
 deployguard_set_warnings(deploy-cli)
+
+# `cmake --install build [--prefix /usr/local]` installs bin/deploy-cli.
+include(GNUInstallDirs)
+install(TARGETS deploy-cli RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # ------------------------------------------------------------------------
 # Tests
@@ -126,6 +131,7 @@ if(DEPLOYGUARD_BUILD_TESTS)
         tests/test_file_lock.cpp
         tests/test_logger.cpp
         tests/test_process_manager.cpp
+        tests/test_report.cpp
         tests/test_signals.cpp
         tests/test_state_store.cpp
     )

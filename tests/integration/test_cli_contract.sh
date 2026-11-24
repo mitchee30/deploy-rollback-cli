@@ -69,22 +69,45 @@ expect_events "deploy rollback"
 expect_missing "$STATE"
 pass
 
-section "exit 2: the rollback fails too; the state file is kept"
+section "exit 2: the rollback fails on every attempt; the state file is kept"
 reset_events
-write_config "$WORK/crit.yaml" "$T" "$WORK/deploy_fail.sh" "$WORK/rb_fail.sh"
+write_config "$WORK/crit.yaml" "$T" "$WORK/deploy_fail.sh" "$WORK/rb_fail.sh" \
+    "rollback_attempts: 2" "rollback_retry_interval_seconds: 0"
 run_cli --config "$WORK/crit.yaml" --log-file "$LOG"
 expect_exit 2
-expect_events "deploy rollback"
+expect_events "deploy rollback rollback"
 expect_first_line "$STATE" "ROLLING_BACK"
 pass
 
-section "after exit 2, the next run retries the rollback first, then deploys"
+section "after exit 2, the next run retries the recorded rollback first"
+# The state file names rb_fail.sh (the hook the failed run used), so the
+# next run retries *that* hook, whatever the new config says. Here it still
+# fails: exit 2 again, and nothing is deployed on top of the broken target.
 reset_events
+run_cli --config "$WORK/ok.yaml" --log-file "$LOG"
+expect_exit 2
+expect_output "interrupted rollback"
+expect_output "instead of the one in the current configuration"
+expect_events "rollback rollback rollback"
+pass
+
+section "once the recorded rollback hook works again, the next run recovers and deploys"
+reset_events
+write_hook "$WORK/rb_fail.sh" "echo rollback >> '$EVENTS'"   # "fixed" by an operator
 run_cli --config "$WORK/ok.yaml" --log-file "$LOG"
 expect_exit 0
 expect_events "rollback deploy"
-expect_output "interrupted rollback"
 expect_missing "$STATE"
+pass
+
+section "a rollback that fails once is retried and succeeds: exit 1"
+reset_events
+write_hook "$WORK/rb_flaky.sh" "echo rollback >> '$EVENTS'; [ \"\$DEPLOYGUARD_ATTEMPT\" -ge 2 ]"
+write_config "$WORK/flaky.yaml" "$T" "$WORK/deploy_fail.sh" "$WORK/rb_flaky.sh" \
+    "rollback_retry_interval_seconds: 0"
+run_cli --config "$WORK/flaky.yaml" --log-file "$LOG"
+expect_exit 1
+expect_events "deploy rollback rollback"
 pass
 
 section "exit 3: target directory missing - no hook runs"
@@ -131,4 +154,22 @@ run_cli --config "$WORK/noisy.yaml" --log-file "$LOG"
 expect_exit 0
 expect_file_has "$LOG" "[STDOUT]  [noisy.sh] to-stdout"
 expect_file_has "$LOG" "[STDERR]  [noisy.sh] to-stderr"
+pass
+
+section "--report writes a JSON summary for every outcome"
+write_config "$WORK/report.yaml" "$T" "$WORK/deploy_fail.sh" "$WORK/rb_ok.sh"
+run_cli --config "$WORK/report.yaml" --log-file "" --report "$WORK/result.json"
+expect_exit 1
+expect_file_has "$WORK/result.json" '"outcome": "ROLLED_BACK"'
+expect_file_has "$WORK/result.json" '"exit_code": 1'
+expect_file_has "$WORK/result.json" '"phase": "deploy"'
+expect_file_has "$WORK/result.json" '"phase": "rollback"'
+if command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$WORK/result.json" ||
+        fail "result.json is not valid JSON"
+fi
+run_cli --config "$WORK/nope.yaml" --log-file "" --report "$WORK/aborted.json"
+expect_exit 3
+expect_file_has "$WORK/aborted.json" '"outcome": "ABORTED"'
+expect_file_has "$WORK/aborted.json" 'Cannot read configuration file'
 pass
