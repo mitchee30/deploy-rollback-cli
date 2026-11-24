@@ -26,6 +26,7 @@ completely.
 | `ConfigParser` / `ArgumentParser` | turn YAML / argv into a validated `Config` | - |
 | `Logger` | console and log file | - |
 | `signals` | turn SIGINT/SIGTERM/SIGHUP into a flag | - |
+| `report` | serialise the run summary as JSON for `--report` | - |
 
 Each has its own header in `include/deployguard/` and is unit-tested in
 isolation; `DeployController` receives its `Logger` and `ProcessManager` (and
@@ -49,6 +50,40 @@ Only two states are ever written to disk, `INSTALLING` and `ROLLING_BACK`.
 `STABLE` is the absence of the file. The state is written **before** the
 corresponding hook starts and removed only **after** it succeeded, so at
 every instant the file errs on the side of "something may be half done".
+
+### Recovery repeats the interrupted run's own rollback
+
+The state file is not just a flag. Its content looks like this:
+
+```
+INSTALLING
+rollback=/srv/hooks/rollback.sh
+run_id=20261124T054012Z-4242-1
+pid=4242
+updated_at=2026-11-24T05:40:12Z
+```
+
+Recovery runs *that* rollback hook, on behalf of *that* run id - not the hook
+named in today's `deploy.yaml`. Between a crash and the next run someone may
+well edit the configuration (that is often how the crash gets "fixed"), and a
+different rollback hook is not guaranteed to know how to undo what the dead
+run did. If the two differ, `deploy-cli` warns; if the recorded hook no
+longer exists, it refuses with exit 2 rather than guess. Paths are recorded
+as absolute paths, so recovery also works when the next run is started from
+another directory (which is also why hooks get the absolute target as `$1`).
+
+State files written before v0.4 contain only the state; recovery then falls
+back to the configured rollback hook.
+
+### Retrying a failed rollback
+
+Exit 2 means "page a human", so a failed rollback is retried
+(`rollback_attempts`, default 3, `rollback_retry_interval_seconds` apart)
+before giving up: rollbacks often fail for transient reasons - a port not
+released yet, a network blip. This is safe only because rollback hooks must
+be idempotent anyway (recovery may run them again after a crash). A hook that
+cannot be *started* (missing, not executable) is not retried: that cannot fix
+itself.
 
 ### Recovery is only safe because of the lock
 
@@ -103,10 +138,17 @@ rollback hook needs:
 > committed (copied to `backup.tmp`, then `mv`'d to `backup`).
 
 Therefore at any crash point: backup present means it is complete; backup
-absent means the target was not touched. `deploy-cli` adds the other half: it
-deletes any backup left by an earlier, committed deployment *before* writing
-`INSTALLING`. Without that, a crash right after `INSTALLING` would make
-recovery restore a backup two versions old.
+absent means the target was not touched. The remaining danger is a *stale*
+backup - left by an earlier, committed deployment. If one were still there
+when a new deployment crashed right after `INSTALLING`, recovery would restore
+it and roll the target back two versions. Two independent safeguards:
+
+1. `deploy-cli` deletes `DEPLOYGUARD_BACKUP_DIR` *before* writing
+   `INSTALLING` (a crash in between leaves state `STABLE` with nothing
+   changed);
+2. the demo deploy hook tags its backup with `DEPLOYGUARD_RUN_ID`
+   (`<backup>.run_id`), and the rollback hook only restores a backup whose tag
+   matches the run it is rolling back.
 
 ## 5. Running hooks
 
@@ -120,7 +162,12 @@ recovery restore a backup two versions old.
 * **Own process group.** The child calls `setpgid(0, 0)` (the parent does
   too, to win the race), so a timeout or cancellation can signal the script
   *and everything it started* with `kill(-pgid, ...)`: SIGTERM first, SIGKILL
-  after a 5 s grace period, and a final SIGKILL sweep for stragglers.
+  after `kill_grace_seconds` (default 5), and a final SIGKILL sweep for
+  stragglers.
+* **A limit per kind of hook.** Deploy and rollback runs get
+  `timeout_seconds` (default 600); a health check gets
+  `health_check_timeout_seconds` (default 30). With a single limit, one hung
+  health check would have cost 3 attempts x 10 minutes.
 * **"Could not start" vs "exited 127".** A close-on-exec pipe carries `errno`
   back if `execvp()` fails; a successful exec closes it and the parent reads
   EOF. This is how `ENOENT`/`EACCES` are reported precisely. (Pre-flight
@@ -130,10 +177,20 @@ recovery restore a backup two versions old.
   its default (we ignore it ourselves, and ignored signals survive exec), and
   the signal mask is cleared. `argv` is built before `fork()`.
 * **Context via environment.** `DEPLOYGUARD_PHASE`, `DEPLOYGUARD_TARGET`,
-  `DEPLOYGUARD_BACKUP_DIR`, `DEPLOYGUARD_ATTEMPT` - the same pattern git hooks
-  and CI systems use.
+  `DEPLOYGUARD_RUN_ID`, `DEPLOYGUARD_BACKUP_DIR`, `DEPLOYGUARD_ATTEMPT` - the
+  same pattern git hooks and CI systems use.
 
-## 6. Signals
+## 6. Observability
+
+* **Log file**: every line, ours and the hooks' stdout *and* stderr, with a
+  millisecond timestamp. Appended across runs; rotated to `<file>.1` once it
+  passes 10 MiB, so it cannot fill the disk.
+* **`--report <file>`**: a JSON summary - outcome, exit code, reason, run ids
+  (including a recovered run's), and every hook run with attempt number,
+  result and duration. Written atomically (temp file + rename) for every
+  outcome, including invalid configuration, so a CI step can always read it.
+
+## 7. Signals
 
 * The handlers for SIGINT, SIGTERM and SIGHUP only store the signal number in
   a `volatile sig_atomic_t`; that is all a handler can safely do. The main loop
@@ -149,7 +206,7 @@ recovery restore a backup two versions old.
 * SIGPIPE is ignored so that a closed stdout (`deploy-cli ... | head`) cannot
   kill `deploy-cli` halfway through a deployment.
 
-## 7. Exit codes
+## 8. Exit codes
 
 The exit code is the API for the calling pipeline, so each code answers "what
 state is the target in?" rather than "what went wrong?":
@@ -164,9 +221,9 @@ state is the target in?" rather than "what went wrong?":
 Version 0.1 returned 1 for configuration errors too, which a pipeline could
 not tell apart from "deployed and rolled back".
 
-## 8. Testing strategy
+## 9. Testing strategy
 
-* **Unit tests** (doctest, 134 cases) run each component against small
+* **Unit tests** (doctest, 164 cases) run each component against small
   `/bin/sh` scripts in a fresh temporary directory per test, so `ctest -j`
   runs them in parallel. They cover every edge of the state machine, the
   process handling (timeouts, process-group kills, SIGKILL escalation, exec
@@ -176,19 +233,17 @@ not tell apart from "deployed and rolled back".
   kernel releasing the lock of a process that was SIGKILLed mid-deployment.
 * **Sanitizers**: the whole suite also runs under AddressSanitizer +
   UndefinedBehaviorSanitizer in CI.
-* **Coverage**: about 89% of the lines in `src/`; CI prints the per-file
+* **Coverage**: about 90% of the lines in `src/`; CI prints the per-file
   report. The uncovered lines are mostly failing-syscall branches and the
   child side of `fork()`, which gcov cannot record because the child execs.
 * **Not covered**: a real power cut (the fsync ordering is reasoned about,
   not tested) and network file systems.
 
-## 9. Known limitations and possible next steps
+## 10. Known limitations and possible next steps
 
 * Single host only; `flock()` is not reliable on NFS.
-* The kill grace period (5 s) is fixed; it could become a config key.
-* The state file records the phase but not the release being deployed; a
-  "deployment id" passed to the hooks would let a rollback hook verify that a
-  backup belongs to the current deployment instead of relying on
-  `deploy-cli` deleting stale ones.
-* A machine-readable summary (e.g. `--report result.json`) would make the
-  outcome easier to consume in CI than parsing logs.
+* There is no overall deadline for a run, only per-hook limits; a run's
+  worst case is the sum of all hook limits, retries and pauses.
+* Run ids are unique per host (time, pid, counter), not globally.
+* Retries use a fixed interval; exponential backoff would suit flaky
+  networks better.

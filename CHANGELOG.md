@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0
+
+- **Recovery repeats the interrupted run's own rollback.** The state file now
+  records a run id and the absolute path of the rollback hook; after a crash,
+  the next run uses that hook (warning if `deploy.yaml` now names another)
+  and refuses with exit 2 if it no longer exists.
+- Hooks get `DEPLOYGUARD_RUN_ID`; `$1` is now always the absolute target path.
+- Failed rollbacks are retried: `rollback_attempts` (3),
+  `rollback_retry_interval_seconds` (5). A hook that cannot start is not.
+- The health check has its own limit, `health_check_timeout_seconds` (30).
+- `kill_grace_seconds` (5) configures the SIGTERM -> SIGKILL delay.
+- `--report <file>` writes a JSON summary of the run.
+- The log file is rotated to `.1` once it passes 10 MiB.
+- `cmake --install`; dependencies pinned to commit hashes.
+- Demo hooks tag each backup with the run id; `rollback.sh` leaves a backup
+  of another deployment alone.
+- 164 unit + 6 integration tests; 90% line coverage.
+
 ## 0.3.1
 
 - 25 more unit tests (134 in total): signal handling, console output modes,

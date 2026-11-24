@@ -78,7 +78,7 @@ records just enough state on disk to finish an interrupted job.
 | ---- | ------- | ---------------- |
 | `0`  | Deployed (and passed the health check, if configured). | on the new version |
 | `1`  | The deployment failed, timed out, was cancelled, or failed its health check - and the rollback succeeded. | back on the previous version |
-| `2`  | The rollback failed (or a corrupt state file was found). The state file is kept, so the next run retries the rollback. | **in an unknown state: needs a human** |
+| `2`  | The rollback failed on every attempt (or a corrupt state file was found). The state file is kept, so the next run retries the rollback. | **in an unknown state: needs a human** |
 | `3`  | Nothing was attempted: bad arguments or configuration, a failed pre-flight check (missing target, missing or non-executable hook), or another `deploy-cli` is already working on this target. | unchanged |
 
 ## Usage
@@ -89,8 +89,10 @@ deploy-cli --path <target_dir> [options]      # uses the bundled ./scripts/ hook
 
   -c, --config <file>      YAML configuration (see below)
   -p, --path <dir>         Target directory, with ./scripts/{deploy,rollback,health_check}.sh
-  -t, --timeout <seconds>  Time limit for each hook run; overrides the config (0 = none)
-      --log-file <file>    Append a timestamped log here (default deploy_guard.log, "" = off)
+  -t, --timeout <seconds>  Time limit per deploy/rollback hook run; overrides the config (0 = none)
+      --log-file <file>    Append a timestamped log here (default deploy_guard.log, "" = off;
+                           rotated to <file>.1 once it passes 10 MiB)
+      --report <file>      Write a JSON summary of the run (see below)
   -n, --dry-run            Check everything and print the plan; run no hook, change nothing
   -h, --help               Show help
   -V, --version            Show the version
@@ -105,9 +107,14 @@ deployment:
     deploy: "./scripts/deploy.sh"              # required
     rollback: "./scripts/rollback.sh"          # required
     health_check: "./scripts/health_check.sh"  # optional
-  timeout_seconds: 600                # per hook run, 0 = no limit       (default 600)
-  health_check_attempts: 3            # attempts before rolling back     (default 3)
-  health_check_interval_seconds: 2    # pause between failed attempts    (default 2)
+  # Optional; defaults shown.
+  timeout_seconds: 600                 # limit per deploy/rollback hook run, 0 = none
+  health_check_timeout_seconds: 30     # limit per health check attempt, 0 = none
+  health_check_attempts: 3             # attempts before rolling back
+  health_check_interval_seconds: 2     # pause between failed health checks
+  rollback_attempts: 3                 # a failed rollback is retried this often in total
+  rollback_retry_interval_seconds: 5   # pause between rollback attempts
+  kill_grace_seconds: 5                # on timeout/Ctrl+C: SIGTERM, then SIGKILL after this
 ```
 
 Relative paths are resolved against the directory `deploy-cli` is started
@@ -119,22 +126,57 @@ A hook is any executable (shell script or binary). Each run gets:
 
 | | |
 | --- | --- |
-| `$1` | the target path, exactly as configured |
+| `$1` | the absolute target path (also in `DEPLOYGUARD_TARGET`) |
 | `DEPLOYGUARD_PHASE` | `deploy`, `health_check` or `rollback` |
-| `DEPLOYGUARD_TARGET` | absolute path of the target |
-| `DEPLOYGUARD_BACKUP_DIR` | where to keep a backup for the rollback hook (a hidden sibling of the target). `deploy-cli` deletes it before each new deployment, so a backup that exists during recovery always belongs to the interrupted deployment. |
-| `DEPLOYGUARD_ATTEMPT` | health check attempt number (1, 2, ...) |
+| `DEPLOYGUARD_RUN_ID` | id of the deployment, e.g. `20261124T054012Z-4242-1`. The same for every hook of one deployment - including a rollback run by a *later* `deploy-cli` to recover it after a crash. |
+| `DEPLOYGUARD_BACKUP_DIR` | where to keep a backup for the rollback hook (a hidden sibling of the target). `deploy-cli` deletes it before each new deployment. |
+| `DEPLOYGUARD_ATTEMPT` | attempt number of a health check or rollback (1, 2, ...) |
 | stdin | `/dev/null` - hooks run non-interactively |
-| process group | its own; on timeout or cancellation the whole group gets SIGTERM, then SIGKILL after 5 s |
+| process group | its own; on timeout or cancellation the whole group gets SIGTERM, then SIGKILL after `kill_grace_seconds` |
 
 Exit 0 means success. A rollback hook must work **no matter how far the
-deploy hook got**, and must be safe to run **more than once** (it is re-run
-if `deploy-cli` dies during the rollback). The bundled
-[`scripts/deploy.sh`](scripts/deploy.sh) and
+deploy hook got**, and must be safe to run **more than once** (failed
+attempts are retried, and it is re-run if `deploy-cli` dies during the
+rollback). The bundled [`scripts/deploy.sh`](scripts/deploy.sh) and
 [`scripts/rollback.sh`](scripts/rollback.sh) show one way to do that: the
 deploy hook never touches the target before a complete backup has been
 committed with an atomic rename, so "backup exists" and "target modified"
-always go together.
+always go together; and it tags the backup with `DEPLOYGUARD_RUN_ID`, so the
+rollback hook only ever restores the backup of the deployment it is undoing.
+
+When recovering from a crash, `deploy-cli` runs the rollback hook that the
+interrupted run recorded in its state file, not the one in the current
+configuration (it warns if they differ): only that hook is guaranteed to know
+how to undo that run.
+
+### Report (`--report result.json`)
+
+Written atomically for every outcome, including invalid configuration, so a
+pipeline can read the result instead of parsing logs:
+
+```json
+{
+  "version": "0.4.0",
+  "outcome": "ROLLED_BACK",
+  "exit_code": 1,
+  "target": "/srv/app",
+  "run_id": "20261124T055218Z-5936-1",
+  "recovered_run_id": null,
+  "reason": "the health check failed",
+  "started_at": "2026-11-24T05:52:18Z",
+  "duration_ms": 8830,
+  "steps": [
+    {"phase": "deploy", "attempt": 1, "result": "exited with status 0", "exit_code": 0, "duration_ms": 4077},
+    {"phase": "health_check", "attempt": 1, "result": "exited with status 1", "exit_code": 1, "duration_ms": 20},
+    {"phase": "health_check", "attempt": 2, "result": "exited with status 1", "exit_code": 1, "duration_ms": 69},
+    {"phase": "health_check", "attempt": 3, "result": "exited with status 1", "exit_code": 1, "duration_ms": 17},
+    {"phase": "rollback", "attempt": 1, "result": "exited with status 0", "exit_code": 0, "duration_ms": 2633}
+  ]
+}
+```
+
+`recovered_run_id` is set when the run first had to finish an interrupted
+one (`"unknown"` for state files written before v0.4).
 
 ## Guarantees and how they are tested
 
@@ -142,9 +184,11 @@ always go together.
 | --- | --- | --- |
 | the deploy hook exits non-zero or crashes | runs the rollback hook, exit 1 | unit + `integration.cli_contract` |
 | the deploy hook hangs | stops its whole process group after `timeout_seconds` (SIGTERM, then SIGKILL) and rolls back | unit + `integration.timeout` |
-| the new version fails its health check | retries, then rolls back | unit + `integration.demo_end_to_end` |
+| the new version fails its health check, or the check hangs | retries (each attempt with its own short timeout), then rolls back | unit + `integration.demo_end_to_end` + `integration.timeout` |
+| the rollback fails | retries it `rollback_attempts` times before giving up with exit 2 | unit + `integration.cli_contract` |
 | you press Ctrl+C or send SIGTERM | stops the hook and its children, rolls back (the rollback itself is not interruptible) | unit + `integration.cancellation` |
-| deploy-cli is `kill -9`ed mid-deployment or mid-rollback | the next run finds the state file and finishes the rollback first | `integration.crash_recovery` |
+| deploy-cli is `kill -9`ed mid-deployment or mid-rollback | the next run finds the state file and finishes the rollback first, with the rollback hook the dead run recorded | unit + `integration.crash_recovery` |
+| `deploy.yaml` was changed between the crash and the next run | still uses the recorded rollback hook (and warns); exit 2 if it no longer exists | unit + `integration.cli_contract` |
 | a second deploy-cli starts on the same target | refuses with exit 3 instead of "recovering" the live run | unit + `integration.concurrent_runs` |
 | the rollback hook is missing or not executable | notices before deploying anything, exit 3 | unit + `integration.cli_contract` |
 | the target path contains `'; rm -rf / #` or similar | passes it to the hook as one literal argument (no shell is involved) | unit |
@@ -162,14 +206,16 @@ macOS. yaml-cpp and doctest are downloaded by CMake.
 scripts/build.sh                      # or: cmake -S . -B build && cmake --build build
 cd build
 ctest --output-on-failure -j 8        # everything (~30 s)
-ctest -L unit                         # 134 unit tests (doctest)
+ctest -L unit                         # 164 unit tests (doctest)
 ctest -L integration                  # 6 suites driving the real binary
 ```
 
-Line coverage of `src/` is about 89% (gcov). Most of the rest is error
+Line coverage of `src/` is about 90% (gcov). Most of the rest is error
 handling for failing system calls (e.g. `fsync()` failing) and the code that
 runs in the forked child between `fork()` and `exec()`, which gcov cannot
 record.
+
+Install: `cmake --install build --prefix /usr/local` (installs `bin/deploy-cli`).
 
 Sanitizer build: `scripts/build.sh -DDEPLOYGUARD_SANITIZE=ON`
 (AddressSanitizer + UndefinedBehaviorSanitizer). CI runs GCC and Clang on
@@ -187,6 +233,7 @@ include/deployguard/       one header per component
   signals.h                  SIGINT/SIGTERM/SIGHUP -> graceful cancellation
   config.h                   deploy.yaml parsing and validation
   argument_parser.h          command-line options
+  report.h                   the --report JSON summary
   logger.h                   console output and timestamped log file
 src/                       implementations, main.cpp
 tests/                     unit tests (test_*.cpp) and integration/ (bash)
