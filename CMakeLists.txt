@@ -111,6 +111,9 @@ deployguard_set_warnings(deploy-cli)
 # Tests
 #   - Unit tests (doctest): one CTest entry per TEST_CASE, so `ctest -j`
 #     runs them in parallel. Each test works in its own temporary directory.
+#   - Integration tests (bash, label "integration"): drive the real
+#     deploy-cli binary end to end - SIGKILL mid-deployment, concurrent runs,
+#     Ctrl+C, timeouts, and the bundled demo.
 # ------------------------------------------------------------------------
 if(DEPLOYGUARD_BUILD_TESTS)
     enable_testing()
@@ -129,6 +132,17 @@ if(DEPLOYGUARD_BUILD_TESTS)
     deployguard_set_warnings(deploy-cli-tests)
 
     include(${doctest_SOURCE_DIR}/scripts/cmake/doctest.cmake)
-    doctest_discover_tests(deploy-cli-tests)
+    doctest_discover_tests(deploy-cli-tests PROPERTIES LABELS unit)
 
+    find_program(BASH_EXECUTABLE bash)
+    if(BASH_EXECUTABLE)
+        foreach(name cli_contract crash_recovery concurrent_runs cancellation timeout demo_end_to_end)
+            add_test(NAME integration.${name}
+                     COMMAND ${BASH_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/integration/test_${name}.sh
+                             $<TARGET_FILE:deploy-cli> ${CMAKE_CURRENT_SOURCE_DIR})
+            set_tests_properties(integration.${name} PROPERTIES LABELS integration TIMEOUT 180)
+        endforeach()
+    else()
+        message(WARNING "bash not found: integration tests disabled")
+    endif()
 endif()
