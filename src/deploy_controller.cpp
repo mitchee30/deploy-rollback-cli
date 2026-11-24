@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <iomanip>
 #include <sstream>
+#include <filesystem>
 #include <thread>
 
 #include <sys/stat.h>
@@ -214,6 +215,22 @@ DeploymentOutcome DeployController::runDeployment() {
         return DeploymentOutcome::ABORTED;
     }
 
+    // A backup left in DEPLOYGUARD_BACKUP_DIR by an earlier, *committed*
+    // deployment is stale. If it were still there when we wrote INSTALLING
+    // and we then crashed before the deploy hook replaced it, recovery would
+    // hand the rollback hook that old backup and roll the target back two
+    // versions instead of one. Removing it first gives the hooks a simple
+    // rule: during INSTALLING/ROLLING_BACK, a backup that exists belongs to
+    // the current deployment. (A crash between the two steps leaves state
+    // STABLE with nothing changed - harmless.)
+    std::error_code fs_error;
+    std::filesystem::remove_all(paths_.backup_dir, fs_error);
+    if (fs_error) {
+        logger_->log(LogLevel::ERROR, "Refusing to deploy: cannot remove the stale backup " + paths_.backup_dir +
+                                          " (" + fs_error.message() + ").");
+        return DeploymentOutcome::ABORTED;
+    }
+
     // Written (durably) *before* the deploy hook touches anything. If we die
     // from here on, the next run finds INSTALLING and rolls back.
     std::string error;
@@ -391,7 +408,8 @@ DeploymentOutcome DeployController::dryRun() {
                   std::to_string(config_.health_check_interval_seconds) + "s apart)";
     logger_->log(LogLevel::INFO, "[dry-run] Plan:");
     logger_->log(LogLevel::INFO, "[dry-run]   1. lock      " + paths_.lock_file);
-    logger_->log(LogLevel::INFO, "[dry-run]   2. mark      INSTALLING in " + paths_.state_file);
+    logger_->log(LogLevel::INFO, "[dry-run]   2. mark      delete stale backup " + paths_.backup_dir +
+                                     ", then INSTALLING in " + paths_.state_file);
     logger_->log(LogLevel::INFO, "[dry-run]   3. deploy    " + config_.deploy_script + " " + config_.target_path +
                                      " (" + timeout + ")");
     logger_->log(LogLevel::INFO, "[dry-run]   4. verify    " + verify);

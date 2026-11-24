@@ -1,69 +1,52 @@
-#!/bin/bash
-set -e
-trap 'echo "[rollback.sh] ❌ CRITICAL: Unhandled error on line $LINENO. Rollback failed!" >&2' ERR
+#!/usr/bin/env bash
+# Demo rollback hook for deploy-cli: puts the target back the way it was
+# before the current deployment.
+#
+#   usage: rollback.sh <target_dir>
+#
+# deploy-cli runs this after a failed deployment, and again on its next start
+# if it was killed in the middle of a deployment or of a rollback. So this
+# script must work no matter how far deploy.sh got, and must be safe to run
+# more than once.
+set -euo pipefail
 
-TARGET_PATH="$1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-echo "[rollback.sh] ⚠️ Rollback operation initiated for: $TARGET_PATH"
+TARGET="${1:?usage: rollback.sh <target_dir>}"
+TARGET="${TARGET%/}"
+BACKUP="$(backup_dir_for "$TARGET")"
+log "rolling back $TARGET"
 
-if [ -z "$TARGET_PATH" ]; then
-    echo "[rollback.sh] ❌ Error: Target path not provided."
-    exit 1
+if [ -d "$BACKUP" ]; then
+    # deploy.sh committed a backup, so it may have changed the target.
+    stop_app "$TARGET"
+    mkdir -p "$TARGET"
+    clear_dir "$TARGET"
+    cp -a "$BACKUP/." "$TARGET/"
+    log "restored the files from $BACKUP"
+else
+    # deploy.sh never modifies the target before committing a backup.
+    log "no backup from this deployment: the target was not modified"
 fi
 
-# Must match the persistent, same-disk backup location computed in deploy.sh.
-APP_NAME=$(basename "$TARGET_PATH")
-TARGET_PARENT_DIR="$(cd "$(dirname "$TARGET_PATH")" && pwd)"
-BACKUP_DIR="$TARGET_PARENT_DIR/.deploy_guard_backup_${APP_NAME}"
-
-# 1. Verify backup exists securely
-if [ ! -d "$BACKUP_DIR" ]; then
-    echo "[rollback.sh] ❌ CRITICAL ERROR: Backup directory not found at $BACKUP_DIR!"
-    echo "[rollback.sh] ❌ Automatic rollback aborted."
-    exit 1
+if [ ! -x "$TARGET/app.sh" ]; then
+    # The target was empty before this deployment: nothing to run.
+    stop_app "$TARGET"
+    rm -rf "$BACKUP"
+    log "rollback complete: the target holds no app, as before the deployment"
+    exit 0
 fi
 
-echo "[rollback.sh] 🧹 Cleaning up corrupted deployment files..."
-rm -rf "$TARGET_PATH"/*
-
-# 2. Restore stable v1.0 files from temporary backup
-echo "[rollback.sh] ♻️ Restoring backup files from: $BACKUP_DIR"
-sleep 0.5
-cp -r "$BACKUP_DIR/"* "$TARGET_PATH/"
-
-# 3. Verify restored version
-echo "[rollback.sh] 🔍 Verifying restored application..."
-sleep 0.5
-set +e
-"$TARGET_PATH/app.sh"
-VERIFY_CODE=$?
-set -e
-
-if [ $VERIFY_CODE -ne 0 ]; then
-    echo "[rollback.sh] ❌ CRITICAL: Restored application failed post-rollback verification!"
-    echo "[rollback.sh] ❌ Backup at $BACKUP_DIR is preserved for manual recovery."
-    exit 1
+# Make sure the restored version is running and healthy before deleting the
+# backup: if anything below fails, deploy-cli reports it and re-runs this
+# hook next time, and it will need the backup again.
+if ! app_is_running "$TARGET"; then
+    start_app "$TARGET"
 fi
+wait_until_healthy "$TARGET" 10 ||
+    die "the restored app is not healthy; the backup is kept at $BACKUP for manual recovery"
 
-# 4. Restart restored application
-echo "[rollback.sh] 🔄 Restarting stable application as daemon..."
-pkill -f "app.sh --daemon" || true
-"$TARGET_PATH/app.sh" --daemon &
-
-# 5. Confirm the daemon actually came up before touching the backup.
-sleep 1
-if ! pgrep -f "app.sh --daemon" > /dev/null; then
-    echo "[rollback.sh] ❌ CRITICAL: Restored application did not stay running after restart!"
-    echo "[rollback.sh] ❌ Backup at $BACKUP_DIR is preserved for manual recovery."
-    exit 1
-fi
-
-# 6. Only now that the restart + health check are confirmed good do we clean
-# up the backup. If we crash again before this point, the next self-heal
-# still has a backup to restore from; deleting it any earlier would make a
-# second crash unrecoverable.
-echo "[rollback.sh] 🧹 Cleaning up backup (restart confirmed healthy)..."
-rm -rf "$BACKUP_DIR"
-
-echo "[rollback.sh] ✅ Rollback successfully completed. Version 1.0 is active and healthy."
-exit 0
+rm -rf "$BACKUP"
+log "rollback complete: version $("$TARGET/app.sh" --version) is running and healthy"

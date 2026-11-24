@@ -404,3 +404,30 @@ TEST_CASE("DeployController: --dry-run reports problems as ABORTED") {
     REQUIRE(lock.has_value());
     CHECK(g.controller(g.config()).dryRun() == DeploymentOutcome::ABORTED);
 }
+
+// ---------------------------------------------------------------------------
+// Backup directory lifecycle
+// ---------------------------------------------------------------------------
+
+TEST_CASE("DeployController: a stale backup from an earlier deployment is deleted before the deploy hook runs") {
+    // Otherwise a crash right after INSTALLING would make recovery restore
+    // that old backup and roll the target back two versions.
+    Fixture f;
+    const std::string backup = deriveTargetPaths(f.target).backup_dir;
+    fs::create_directories(backup + "/nested");
+    writeFile(backup + "/nested/old_version", "v0");
+    f.setDeploy("[ ! -e \"$DEPLOYGUARD_BACKUP_DIR\" ]");
+    CHECK(f.controller(f.config()).run() == DeploymentOutcome::SUCCESS);
+    CHECK_FALSE(exists(backup));
+}
+
+TEST_CASE("DeployController: recovery still gets the backup of the interrupted deployment") {
+    Fixture f;
+    const std::string backup = deriveTargetPaths(f.target).backup_dir;
+    fs::create_directory(backup);
+    writeFile(backup + "/version", "v1");
+    REQUIRE(StateStore(f.stateFile()).write(DeploymentState::INSTALLING));
+    f.setRollback("[ -f \"$DEPLOYGUARD_BACKUP_DIR/version\" ]");
+    CHECK(f.controller(f.config()).run() == DeploymentOutcome::SUCCESS);
+    CHECK(f.ranHooks() == std::string("rollback\ndeploy\n"));
+}

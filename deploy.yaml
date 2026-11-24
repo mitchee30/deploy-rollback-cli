@@ -1,9 +1,15 @@
+# Configuration for the bundled demo (try: scripts/demo.sh).
 deployment:
-  # Resolved relative to the current working directory deploy-cli is run
-  # from (same convention as the script paths below) - run it from the repo
-  # root, e.g. via `./scripts/setup_v1.sh && ./build/deploy-cli --config deploy.yaml`.
+  # Relative paths are resolved against the directory deploy-cli is started
+  # from: run it from the repository root.
   target_path: "./test_app_target"
+
   scripts:
     deploy: "./scripts/deploy.sh"
     rollback: "./scripts/rollback.sh"
+    health_check: "./scripts/health_check.sh"  # optional
 
+  # Optional; defaults in brackets.
+  timeout_seconds: 60                 # time limit per hook run, 0 = none [600]
+  health_check_attempts: 3            # [3]
+  health_check_interval_seconds: 1    # pause between failed attempts [2]

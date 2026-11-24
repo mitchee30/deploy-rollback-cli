@@ -1,12 +1,33 @@
-#!/bin/bash
-if [ "$1" == "--daemon" ]; then
-    echo "Service running in background (PID $$)..."
-    while true; do sleep 10; done
-else
-    echo "====================================="
-    echo "   🟢 MyWebservice App - Version 1.0"
-    echo "   Status: Running stable"
-    echo "   Port: 8080"
-    echo "====================================="
-    exit 0
-fi
+#!/usr/bin/env bash
+# Demo application, version 1.0 (healthy).
+#
+#   app.sh            print a banner
+#   app.sh --version  print the version
+#   app.sh --daemon   run as a long-lived service (until SIGTERM)
+#   app.sh --health   exit 0 if the service is healthy
+set -euo pipefail
+VERSION="1.0"
+
+case "${1:-}" in
+    --version)
+        echo "$VERSION"
+        ;;
+    --daemon)
+        echo "[app v$VERSION] service started (pid $$)"
+        trap 'echo "[app v$VERSION] stopping"; exit 0' TERM INT
+        while true; do sleep 1; done
+        ;;
+    --health)
+        echo "[app v$VERSION] healthy"
+        ;;
+    "")
+        echo "====================================="
+        echo "   🟢 MyWebservice App - Version $VERSION"
+        echo "   Status: running stable, port 8080"
+        echo "====================================="
+        ;;
+    *)
+        echo "usage: app.sh [--version | --daemon | --health]" >&2
+        exit 2
+        ;;
+esac

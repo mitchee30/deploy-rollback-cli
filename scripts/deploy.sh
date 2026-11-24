@@ -1,77 +1,58 @@
-#!/bin/bash
-set -e
-trap 'echo "[deploy.sh] ❌ CRITICAL: Unhandled error on line $LINENO. Aborting deployment!" >&2' ERR
+#!/usr/bin/env bash
+# Demo deploy hook for deploy-cli: installs a release into the target and
+# starts it.
+#
+#   usage: deploy.sh <target_dir>
+#   release: $DEMO_RELEASE (default v2.0, the broken one), from ../releases/
+#
+# Contract with deploy-cli: exit 0 = installed and started. Anything else
+# (or a crash, or a timeout) makes deploy-cli run rollback.sh. Whether the
+# new version is *healthy* is decided afterwards by health_check.sh.
+#
+# The invariant that makes rollback safe from any point of this script:
+#
+#   The target is not modified until a complete backup of it has been
+#   committed (copied to a temporary directory, then renamed into place).
+#
+# So if rollback.sh finds a backup, it is complete and belongs to this
+# deployment (deploy-cli deletes leftover backups before running this hook);
+# if it finds none, the target was never touched.
+set -euo pipefail
 
-TARGET_PATH="$1"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
 
-# Derive the project root from this script's own location (works after a
-# fresh clone on any machine/CI, no dependency on a local absolute path).
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-WORKSPACE_DIR="$( dirname "$SCRIPT_DIR" )"
-RELEASE_V2="$WORKSPACE_DIR/releases/v2.0"
+TARGET="${1:?usage: deploy.sh <target_dir>}"
+TARGET="${TARGET%/}"
+RELEASE="${DEMO_RELEASE:-v2.0}"
+RELEASE_DIR="$(dirname "$SCRIPT_DIR")/releases/$RELEASE"
 
-echo "[deploy.sh] 🚀 Starting deployment to target: $TARGET_PATH"
+[ -d "$TARGET" ] || die "target directory $TARGET does not exist"
+[ -x "$RELEASE_DIR/app.sh" ] || die "release $RELEASE not found in $(dirname "$RELEASE_DIR")"
 
-# 1. Pre-installation checks
-if [ -z "$TARGET_PATH" ]; then
-    echo "[deploy.sh] ❌ Error: Target path not provided."
-    exit 1
-fi
+BACKUP="$(backup_dir_for "$TARGET")"
+log "deploying $RELEASE to $TARGET"
 
-if [ ! -d "$TARGET_PATH" ]; then
-    echo "[deploy.sh] ❌ Error: Target directory $TARGET_PATH does not exist."
-    exit 1
-fi
+# 1. Back up the current version - hidden files included - and commit the
+#    backup with an atomic rename. (Also clears leftovers when this script
+#    is run on its own, without deploy-cli.)
+rm -rf "$BACKUP" "$BACKUP.tmp"
+mkdir -p "$BACKUP.tmp"
+cp -a "$TARGET/." "$BACKUP.tmp/"
+mv "$BACKUP.tmp" "$BACKUP"
+log "backup committed: $BACKUP"
 
-# 1.5 Process Mutex & Pre-flight Check
-echo "[deploy.sh] 🔍 Pre-flight checks: Scanning for active application processes..."
-if pgrep -f "app.sh --daemon" > /dev/null; then
-    echo "[deploy.sh] ⚠️ Detected running instance of app.sh. Initiating safe shutdown..."
-    pkill -f "app.sh --daemon" || true
-    sleep 1
-    echo "[deploy.sh] ✅ Active processes safely terminated."
-else
-    echo "[deploy.sh] ✅ No active processes found."
-fi
+# 2. Stop the running version (this target's app only, via its pid file).
+stop_app "$TARGET"
 
-# 2. Backup path on the same persistent disk as the target (NOT the system
-# temp dir - tmpfs-backed /tmp is wiped on reboot, which would destroy the
-# backup exactly when the power-loss/crash self-healing needs it most).
-APP_NAME=$(basename "$TARGET_PATH")
-TARGET_PARENT_DIR="$(cd "$(dirname "$TARGET_PATH")" && pwd)"
-BACKUP_DIR="$TARGET_PARENT_DIR/.deploy_guard_backup_${APP_NAME}"
+# 3. Replace the files.
+clear_dir "$TARGET"
+cp -a "$RELEASE_DIR/." "$TARGET/"
+log "installed $RELEASE"
 
-echo "[deploy.sh] 📦 Creating persistent backup of v1.0 in: $BACKUP_DIR"
-rm -rf "$BACKUP_DIR"
-mkdir -p "$BACKUP_DIR"
-
-# Copy all existing files to temporary backup
-cp -r "$TARGET_PATH/"* "$BACKUP_DIR/"
-echo "[deploy.sh] ✅ Backup successfully saved to temp."
-
-# 3. Simulate copying/installing the new version (v2.0)
-echo "[deploy.sh] ⚙️ Overwriting installation with new v2.0 files..."
-sleep 0.5
-rm -rf "$TARGET_PATH"/*
-cp -r "$RELEASE_V2/"* "$TARGET_PATH/"
-
-# 4. Perform Health Check verification on newly installed v2.0
-echo "[deploy.sh] 🔍 Initiating post-deployment health checks..."
-sleep 0.5
-
-# Suspend strict error trapping specifically to manually evaluate the health check status
-set +e
-"$TARGET_PATH/app.sh"
-HEALTH_CODE=$?
-set -e
-
-if [ $HEALTH_CODE -ne 0 ]; then
-    echo "[deploy.sh] ❌ Post-deployment health check failed with exit code $HEALTH_CODE!"
-    echo "[deploy.sh] ❌ Halting installation. Signalling orchestrator to rollback."
-    exit 1
-fi
-
-# 5. Success Phase: Restart the application as daemon
-"$TARGET_PATH/app.sh" --daemon &
-echo "[deploy.sh] 🎉 Deployment successfully verified and application launched in background."
-exit 0
+# 4. Start the new version and check that the process survives startup.
+start_app "$TARGET"
+sleep 1
+app_is_running "$TARGET" || die "$RELEASE exited during startup; see $(app_log_for "$TARGET")"
+log "$RELEASE is running"

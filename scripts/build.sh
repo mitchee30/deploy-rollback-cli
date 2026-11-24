@@ -1,21 +1,16 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+# Configures and builds deploy-cli and its tests in ./build.
+#
+#   usage: scripts/build.sh [extra CMake options]
+#   e.g.   scripts/build.sh -DDEPLOYGUARD_SANITIZE=ON
+set -euo pipefail
 
-# Get the directory of the script
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-PROJECT_DIR="$( dirname "$SCRIPT_DIR" )"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-BUILD_DIR="$PROJECT_DIR/build"
+cmake -S "$ROOT" -B "$ROOT/build" "$@"
+cmake --build "$ROOT/build" --parallel
 
-echo "Creating build directory at $BUILD_DIR..."
-mkdir -p "$BUILD_DIR"
-
-cd "$BUILD_DIR"
-
-echo "Running CMake..."
-cmake ..
-
-echo "Building project..."
-make
-
-echo "Build complete. Executable is at $BUILD_DIR/deploy-cli"
+echo
+echo "Built:      $ROOT/build/deploy-cli"
+echo "Run tests:  (cd build && ctest --output-on-failure -j 8)"
+echo "Run demo:   scripts/demo.sh"
